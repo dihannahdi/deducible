@@ -14,10 +14,20 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
+const ahliyyah = require("./ahliyyah");
 
 const OUT = path.join(__dirname, "..", "fiqh-compiler", "out");
 const FIQHC = path.join(__dirname, "..", "fiqh-compiler", "target", "debug", "fiqhc");
+const DID_REGISTRY = path.join(__dirname, "did_registry.json");
 const PORT = process.env.GATEWAY_PORT || 8799;
+
+function loadDids() {
+  const reg = ahliyyah.loadRegistry(DID_REGISTRY);
+  // strip the documentation key
+  const out = {};
+  for (const [k, v] of Object.entries(reg)) if (!k.startsWith("_")) out[k] = v;
+  return out;
+}
 
 function loadManifests() {
   const map = {};
@@ -101,6 +111,31 @@ const server = http.createServer(async (req, res) => {
     return res.end(DASH);
   }
   if (req.method === "GET" && req.url === "/manifests") return send(200, Object.keys(loadManifests()));
+  if (req.method === "GET" && req.url === "/dids") return send(200, Object.keys(loadDids()));
+  // Ahliyyah + DID middleware (vector #3): verify the legal capacity of every contracting party
+  // (and, optionally, the invariant terms) BEFORE a compiled contract may execute.
+  if (req.method === "POST" && req.url === "/authorize") {
+    try {
+      const { target, terms, parties } = JSON.parse(await readBody(req));
+      const manifests = loadManifests();
+      const m = manifests[target];
+      if (!m) return send(404, { error: "no manifest for '" + target + "'", available: Object.keys(manifests) });
+      const required = (m.ahliyyah && m.ahliyyah.principals) || [];
+      const cap = ahliyyah.authorize(loadDids(), parties || {}, required);
+      const inv = terms ? enforce(m, terms) : { allowed: true, violations: [] };
+      const allowed = cap.allCapable && inv.allowed;
+      return send(200, {
+        allowed,
+        instrument: m.instrument,
+        regime: m.regime,
+        ahliyyah: cap,
+        invariants: inv,
+        note: "an 'aqd is valid only if both the terms AND the parties pass; capacity (ahliyyat al-ada') is verified per party. No fatwa is issued. [scholar-verify]",
+      });
+    } catch (e) {
+      return send(400, { error: String(e) });
+    }
+  }
   if (req.method === "POST" && req.url === "/enforce") {
     try {
       const { target, terms } = JSON.parse(await readBody(req));

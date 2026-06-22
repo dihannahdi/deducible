@@ -1,0 +1,14 @@
+{
+  "_note": "Sample DID credential registry for the invariant gateway's ahliyyah layer. Each entry asserts a party's capacity claims; an issuer (regulator, court, registry) attests them. The gateway resolves a party's DID here before allowing a compiled contract to execute. [scholar-verify]",
+
+  "did:fiqh:bank-alpha":   { "kind": "institution", "name": "Bank Alpha (licensed)",      "minor": false, "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:client-zayd":  { "kind": "person",      "name": "Zayd (adult, sound, solvent)", "minor": false, "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:lessor-noor":  { "kind": "institution", "name": "Noor Leasing",                "minor": false, "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:lessee-bilal": { "kind": "person",      "name": "Bilal (adult)",               "minor": false, "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+
+  "did:fiqh:minor-omar":      { "kind": "person",      "name": "Omar (a minor)",            "minor": true,  "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:safih-qasim":     { "kind": "person",      "name": "Qasim (interdicted, safih)", "minor": false, "interdicted": true,  "bankrupt": false, "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:bankrupt-co":     { "kind": "institution", "name": "Insolvent Holdings (taflis)", "minor": false, "interdicted": false, "bankrupt": true,  "kyc": true,  "aml_sanctioned": false },
+  "did:fiqh:no-kyc-firm":     { "kind": "institution", "name": "Unverified Firm",           "minor": false, "interdicted": false, "bankrupt": false, "kyc": false, "aml_sanctioned": false },
+  "did:fiqh:sanctioned-x":    { "kind": "person",      "name": "Sanctioned Entity X",       "minor": false, "interdicted": false, "bankrupt": false, "kyc": true,  "aml_sanctioned": true }
+}

@@ -67,11 +67,26 @@ pub fn build_manifest(spec: &Spec) -> String {
         }
         Class::Unknown(_) => {}
     }
+    // Ahliyyah (enterprise vector #3): the principal (contracting) roles whose legal capacity
+    // the gateway must verify before a transition — an 'aqd is invalid if a party lacks
+    // ahliyyat al-ada' (a minor, the interdicted, a bankrupt under hajr). Functionary roles
+    // (oracle, arbiter, beneficiary fund) are not contracting principals.
+    let principals: Vec<&str> = match &class {
+        Class::MusharakahMutanaqisah => vec!["financier", "acquirer"],
+        Class::Mudarabah => vec!["rabb_al_mal", "mudarib"],
+        Class::IjarahImbt => vec!["lessor", "lessee"],
+        Class::CommercialEscrow => vec!["depositor", "beneficiary"],
+        Class::Unknown(_) => vec![],
+    };
     let manifest = json!({
         "instrument": spec.class,
         "regime": class.regime(),
         "name": spec.name,
         "constraints": c,
+        "ahliyyah": {
+            "principals": principals,
+            "note": "every principal must present a DID credential establishing ahliyyat al-ada' (capacity): not a minor, not interdicted (safih/majnun), not a bankrupt under hajr (taflis), KYC-cleared, not AML-sanctioned [scholar-verify]"
+        },
         "note": "Portable invariant manifest. Enforce each constraint against a proposed terms object before committing it to any ledger or database. The engine proves consistency with a declared rule-base; it issues no fatwa.",
     });
     serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| "{}".to_string())
