@@ -1,0 +1,15 @@
+[package]
+name = "fiqhc-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C-ABI / WebAssembly surface for the fiqhc engine — embed compliance-by-construction into any runtime"
+license = "MIT"
+
+[lib]
+name = "fiqhc_ffi"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+fiqhc = { path = "../fiqhc" }
+serde_json = "1"

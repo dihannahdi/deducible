@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>fiqhc — in-browser .fiqh validation (Wasm)</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.3rem; } .sub { color: #666; font-weight: 400; }
+  textarea { width: 100%; height: 340px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .ok { color: #15803d; font-weight: 600; } .no { color: #b91c1c; font-weight: 600; }
+  .diag { border-left: 3px solid #b91c1c; padding: .3rem .6rem; margin: .4rem 0; background: #fef2f2; }
+  .diag.warn { border-color: #b45309; background: #fffbeb; }
+  .code { font-family: ui-monospace, monospace; font-weight: 600; }
+  .cite { color: #555; font-size: 13px; } .loc { color: #999; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>fiqhc <span class="sub">— compliance-by-construction, validated in your browser (WebAssembly)</span></h1>
+<p>Edit the specification; it is checked entirely client-side by the Rust engine compiled to Wasm.
+A guaranteed-capital clause or a self-named price is flagged with its fiqh code and daleel.
+The engine issues no fatwa — it proves consistency with a declared rule-base.</p>
+<textarea id="src"></textarea>
+<p><button id="run">Check</button> <span id="status">loading engine…</span></p>
+<div id="out"></div>
+<script>
+const SAMPLE = `instrument FakeDiminishingPartnership : musharakah_mutanaqisah {
+  meta { basis: "a fixed-rate loan presented as a partnership"; }
+  parties { bank: financier; client: acquirer; valuer: oracle independent; }
+  capital { bank: 8000 bps; client: 2000 bps; }
+  returns {
+    rent { basis: principal; rate: 500 per_period; }
+    buyout { price: 11000; transfers: bank.share -> client.share; }
+  }
+  risk { loss: none; capital_guarantee: bank; }
+  invariant ownership_conserved { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  lifecycle { fund; payRent; buyShare(bps); settle; }
+}`;
+document.getElementById("src").value = SAMPLE;
+
+let ex = null;
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+async function load() {
+  const module = await WebAssembly.compileStreaming(fetch("fiqhc_ffi.wasm"));
+  const importObject = {};
+  for (const imp of WebAssembly.Module.imports(module)) {
+    importObject[imp.module] = importObject[imp.module] || {};
+    importObject[imp.module][imp.name] = imp.kind === "function" ? (() => 0)
+      : imp.kind === "memory" ? new WebAssembly.Memory({ initial: 256 })
+      : imp.kind === "table" ? new WebAssembly.Table({ initial: 0, element: "anyfunc" }) : 0;
+  }
+  ({ exports: ex } = await WebAssembly.instantiate(module, importObject));
+  document.getElementById("status").textContent = "engine ready (Wasm)";
+}
+
+function check(src) {
+  const input = enc.encode(src);
+  const ptr = ex.fiqh_alloc(input.length);
+  new Uint8Array(ex.memory.buffer).set(input, ptr);
+  const res = ex.fiqh_check_json(ptr, input.length);
+  const m = new Uint8Array(ex.memory.buffer);
+  let end = res; while (m[end] !== 0) end++;
+  const json = dec.decode(m.slice(res, end));
+  ex.fiqh_free_cstr(res); ex.fiqh_free(ptr, input.length);
+  return JSON.parse(json);
+}
+
+function render(r) {
+  const out = document.getElementById("out");
+  const head = r.ok ? '<p class="ok">✓ consistent with the declared rule-base</p>'
+                     : '<p class="no">✗ refused — ' + r.diagnostics.filter(d => d.severity === "error").length + ' violation(s)</p>';
+  const items = r.diagnostics.map(d =>
+    '<div class="diag ' + (d.severity === "warning" ? "warn" : "") + '">' +
+    '<span class="code">[' + d.code + ']</span> ' + escapeHtml(d.message) +
+    ' <span class="loc">(' + d.line + ':' + d.col + ')</span>' +
+    (d.citation ? '<div class="cite">daleel: ' + escapeHtml(d.citation) + '</div>' : '') +
+    '</div>').join("");
+  out.innerHTML = head + items;
+}
+function escapeHtml(s){ return s.replace(/[&<>]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])); }
+
+document.getElementById("run").onclick = () => { if (ex) render(check(document.getElementById("src").value)); };
+load().then(() => render(check(document.getElementById("src").value))).catch(e => {
+  document.getElementById("status").textContent = "failed to load: " + e + " (serve this dir over http and place fiqhc_ffi.wasm beside it)";
+});
+</script>
+</body>
+</html>
