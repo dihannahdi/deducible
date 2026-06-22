@@ -90,7 +90,7 @@ node scripts/interact6.js       # HTS-native atomic buyout (V3)
 
 Build the paper (requires `pandoc`):
 ```bash
-pandoc paper/full_paper_v3.md -o paper.docx
+pandoc paper/paper.md -o paper.docx
 ```
 
 ## Repository layout
