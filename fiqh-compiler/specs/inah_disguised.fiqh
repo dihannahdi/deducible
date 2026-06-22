@@ -1,0 +1,37 @@
+// NEGATIVE CONTROL — bay' al-'inah.
+//
+// Two impeccable-looking sales. The bank sells a widget to the customer on a deferred,
+// marked-up price; the customer immediately sells the SAME widget back to the bank, spot,
+// for less. No widget is ever used; the round-trip exists only so the customer receives
+// cash now (10000) and repays more later (11000). The 1000 gap across time is interest.
+//
+// No single-contract check can see this — each sale, alone, is valid. Only the flow graph
+// reveals the cycle. The compiler must refuse the whole bundle with INAH-1.
+bundle InahDisguised {
+  meta {
+    basis: "two sales composing a loan — the 'inah ruse";
+    regime: islamic;
+  }
+
+  parties {
+    bank: financier;
+    customer: client;
+  }
+
+  legs {
+    sale: murabahah {
+      from: bank;
+      to: customer;
+      asset: widget;
+      payment: deferred;
+      price: 11000;
+    }
+    buyback: bay {
+      from: customer;
+      to: bank;
+      asset: widget;
+      payment: spot;
+      price: 10000;
+    }
+  }
+}

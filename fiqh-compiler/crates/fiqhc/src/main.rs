@@ -54,8 +54,9 @@ fn main() {
         "parse" => {
             let path = args.get(2).unwrap_or_else(|| usage());
             let src = read(path);
-            match fiqhc::compile_parse(&src) {
-                Ok(spec) => println!("{:#?}", spec),
+            match fiqhc::compile_parse_unit(&src) {
+                Ok(fiqhc::parser::Unit::Instrument(spec)) => println!("{:#?}", spec),
+                Ok(fiqhc::parser::Unit::Bundle(b)) => println!("{:#?}", b),
                 Err((msg, span)) => {
                     eprintln!("{}:{}:{}: parse error: {}", path, span.line, span.col, msg);
                     exit(1);
@@ -78,6 +79,30 @@ fn main() {
             }
             let path = spec_path.unwrap_or_else(|| usage());
             let src = read(&path);
+            // Composite bundle? Route to the graph-based invariant checker (al-'uqud al-murakkabah).
+            if matches!(fiqhc::compile_parse_unit(&src), Ok(fiqhc::parser::Unit::Bundle(_))) {
+                match fiqhc::compile_check_bundle(&src) {
+                    Ok((bundle, diags)) => {
+                        let errors = report(&path, &diags);
+                        if errors > 0 {
+                            eprintln!(
+                                "\nrefused: composite '{}' encodes a riba structure by COMPOSITION ({} error(s)). No package emitted.",
+                                bundle.name, errors
+                            );
+                            exit(1);
+                        }
+                        println!(
+                            "consistent: composite '{}' is free of bay' al-'inah / organized-tawarruq cycles by construction. (Consistency is not a fatwa. Allahu a'lam.)",
+                            bundle.name
+                        );
+                        return;
+                    }
+                    Err((msg, span)) => {
+                        eprintln!("{}:{}:{}: parse error: {}", path, span.line, span.col, msg);
+                        exit(1);
+                    }
+                }
+            }
             let spec = match fiqhc::compile_parse(&src) {
                 Ok(s) => s,
                 Err((msg, span)) => {
@@ -138,6 +163,32 @@ fn main() {
             }
             let path = spec_path.unwrap_or_else(|| usage());
             let src = read(&path);
+            // Composite bundle? Gate on the flow graph, then emit a composite invariant manifest.
+            if matches!(fiqhc::compile_parse_unit(&src), Ok(fiqhc::parser::Unit::Bundle(_))) {
+                match fiqhc::compile_check_bundle(&src) {
+                    Ok((bundle, diags)) => {
+                        let errors = report(&path, &diags);
+                        if errors > 0 {
+                            eprintln!(
+                                "\nrefused: composite '{}' encodes a riba structure by COMPOSITION ({} error(s)). No package emitted.",
+                                bundle.name, errors
+                            );
+                            exit(1);
+                        }
+                        let manifest = fiqhc::composite::build_manifest(&bundle);
+                        let out = write_out(&root, &format!("fiqh-compiler/out/{}.composite.json", bundle.name), &manifest);
+                        println!(
+                            "emitted composite invariant manifest from '{}' — free of riba cycles by construction:\n    {}",
+                            bundle.name, out
+                        );
+                        return;
+                    }
+                    Err((msg, span)) => {
+                        eprintln!("{}:{}:{}: parse error: {}", path, span.line, span.col, msg);
+                        exit(1);
+                    }
+                }
+            }
             let (spec, diags) = match fiqhc::compile_check(&src) {
                 Ok(x) => x,
                 Err((msg, span)) => {

@@ -18,6 +18,22 @@ pub fn parse(toks: Vec<Token>) -> Result<Spec, ParseErr> {
     p.parse_spec()
 }
 
+/// A compilation unit: a single `instrument` or a composite `bundle`.
+pub enum Unit {
+    Instrument(Box<Spec>),
+    Bundle(Box<Bundle>),
+}
+
+/// Parse a unit, dispatching on the leading keyword (`instrument` vs `bundle`).
+pub fn parse_unit(toks: Vec<Token>) -> Result<Unit, ParseErr> {
+    let mut p = Parser::new(toks);
+    if p.is_ident("bundle") {
+        Ok(Unit::Bundle(Box::new(p.parse_bundle()?)))
+    } else {
+        Ok(Unit::Instrument(Box::new(p.parse_spec()?)))
+    }
+}
+
 impl Parser {
     fn new(toks: Vec<Token>) -> Self {
         Parser { toks, pos: 0 }
@@ -164,6 +180,11 @@ impl Parser {
     }
 
     fn parse_parties(&mut self) -> Result<Section, ParseErr> {
+        Ok(Section::Parties(self.parse_party_block()?))
+    }
+
+    /// Parse a `parties { name: role flags…; … }` block (shared by instruments and bundles).
+    fn parse_party_block(&mut self) -> Result<Vec<Party>, ParseErr> {
         self.bump();
         self.expect(&Tok::LBrace)?;
         let mut v = Vec::new();
@@ -188,7 +209,7 @@ impl Parser {
             });
         }
         self.expect(&Tok::RBrace)?;
-        Ok(Section::Parties(v))
+        Ok(v)
     }
 
     fn parse_capital(&mut self) -> Result<Section, ParseErr> {
@@ -288,6 +309,67 @@ impl Parser {
         }
         self.expect(&Tok::RBrace)?;
         Ok(Section::Lifecycle(v))
+    }
+
+    // --- composite contracts (bundle) ---
+
+    fn parse_bundle(&mut self) -> Result<Bundle, ParseErr> {
+        let span = self.span();
+        self.bump(); // 'bundle'
+        let name = self.expect_ident()?;
+        self.expect(&Tok::LBrace)?;
+        let mut sections = Vec::new();
+        while *self.peek() != Tok::RBrace {
+            if *self.peek() == Tok::Eof {
+                return self.err("unexpected end of file inside bundle body");
+            }
+            sections.push(self.parse_bundle_section()?);
+        }
+        self.expect(&Tok::RBrace)?;
+        Ok(Bundle {
+            name,
+            sections,
+            span,
+        })
+    }
+
+    fn parse_bundle_section(&mut self) -> Result<BundleSection, ParseErr> {
+        let kw = match self.peek().clone() {
+            Tok::Ident(s) => s,
+            other => return self.err(format!("expected a bundle section keyword, found {:?}", other)),
+        };
+        match kw.as_str() {
+            "meta" => {
+                self.bump();
+                self.expect(&Tok::LBrace)?;
+                let kvs = self.parse_kv_list()?;
+                Ok(BundleSection::Meta(kvs))
+            }
+            "parties" => Ok(BundleSection::Parties(self.parse_party_block()?)),
+            "legs" => self.parse_legs(),
+            other => self.err(format!("unknown bundle section '{}' (expected meta, parties, legs)", other)),
+        }
+    }
+
+    /// Parse `legs { <id>: <kind> { from; to; asset; payment; price } … }`.
+    fn parse_legs(&mut self) -> Result<BundleSection, ParseErr> {
+        self.bump(); // 'legs'
+        self.expect(&Tok::LBrace)?;
+        let mut v = Vec::new();
+        while *self.peek() != Tok::RBrace {
+            if *self.peek() == Tok::Eof {
+                return self.err("unexpected end of file inside legs");
+            }
+            let span = self.span();
+            let id = self.expect_ident()?;
+            self.expect(&Tok::Colon)?;
+            let kind = self.expect_ident()?;
+            self.expect(&Tok::LBrace)?;
+            let kvs = self.parse_kv_list()?;
+            v.push(Leg { id, kind, kvs, span });
+        }
+        self.expect(&Tok::RBrace)?;
+        Ok(BundleSection::Legs(v))
     }
 
     // --- expressions ---

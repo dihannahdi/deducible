@@ -1,0 +1,40 @@
+// POSITIVE CONTROL — a HALAL composite (wakalah + murabahah).
+//
+// The same deferred markup that is riba in the 'inah case is licit here. The difference is
+// purely topological: the asset does NOT return. The bank buys a machine from the supplier
+// (spot, as the customer's purchasing agent under wakalah), then sells it to the customer
+// cost-plus on deferred terms (murabahah). The customer KEEPS the machine. There is no
+// buy-back, no ring, no cycle — a genuine sale of a real good the customer wanted.
+//
+// This is the crucial contrast: the engine does not forbid deferred markup; it forbids the
+// CYCLE that turns markup into interest. supplier -> bank -> customer is acyclic, so it
+// compiles. Allahu a'lam.
+bundle MurabahahComposite {
+  meta {
+    basis: "wakalah (agency to purchase) then murabahah (cost-plus sale); the customer keeps the asset";
+    regime: islamic;
+  }
+
+  parties {
+    bank: financier;
+    customer: client;
+    supplier: vendor;
+  }
+
+  legs {
+    acquire: wakalah {
+      from: supplier;
+      to: bank;
+      asset: machine;
+      payment: spot;
+      price: 10000;
+    }
+    sale: murabahah {
+      from: bank;
+      to: customer;
+      asset: machine;
+      payment: deferred;
+      price: 11000;
+    }
+  }
+}

@@ -11,6 +11,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod composite;
 pub mod fuzz;
 pub mod lexer;
 pub mod lsp;
@@ -30,6 +31,28 @@ pub fn compile_check(src: &str) -> Result<(ast::Spec, Vec<sema::Diagnostic>), (S
     let spec = compile_parse(src)?;
     let diags = sema::check(&spec);
     Ok((spec, diags))
+}
+
+/// Lex + parse a compilation unit (an `instrument` or a composite `bundle`).
+pub fn compile_parse_unit(src: &str) -> Result<parser::Unit, (String, ast::Span)> {
+    let toks = lexer::lex(src)?;
+    parser::parse_unit(toks).map_err(|e| (e.msg, e.span))
+}
+
+/// Lex + parse + run the graph-based invariant checker over a composite `bundle`.
+/// Errors if the source is a single instrument rather than a bundle.
+pub fn compile_check_bundle(
+    src: &str,
+) -> Result<(ast::Bundle, Vec<sema::Diagnostic>), (String, ast::Span)> {
+    match compile_parse_unit(src)? {
+        parser::Unit::Bundle(b) => {
+            let diags = composite::check_bundle(&b);
+            Ok((*b, diags))
+        }
+        parser::Unit::Instrument(_) => {
+            Err(("expected a composite 'bundle', found a single 'instrument'".to_string(), ast::Span::new(0, 0)))
+        }
+    }
 }
 
 /// Lex + parse + check against a PLUGGABLE rule-base module (Open Core pillar #2) — the same

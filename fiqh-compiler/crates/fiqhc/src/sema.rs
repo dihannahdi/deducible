@@ -36,7 +36,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    fn error(code: &str, span: Span, msg: impl Into<String>, citation: &str) -> Self {
+    pub fn error(code: &str, span: Span, msg: impl Into<String>, citation: &str) -> Self {
         Diagnostic {
             code: code.to_string(),
             severity: Severity::Error,
@@ -45,7 +45,7 @@ impl Diagnostic {
             span,
         }
     }
-    fn warn(code: &str, span: Span, msg: impl Into<String>, citation: &str) -> Self {
+    pub fn warn(code: &str, span: Span, msg: impl Into<String>, citation: &str) -> Self {
         Diagnostic {
             code: code.to_string(),
             severity: Severity::Warning,

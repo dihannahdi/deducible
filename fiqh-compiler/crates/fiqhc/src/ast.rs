@@ -91,6 +91,66 @@ pub struct Step {
     pub span: Span,
 }
 
+// --- Composite contracts (al-'uqud al-murakkabah) ---
+//
+// A `bundle` describes several legs (sub-contracts) and the asset/cash flows between
+// the parties. A single leg may be impeccable; their *composition* may still encode a
+// ruse — most notably bay' al-'inah (a sale followed by a buy-back) or organized
+// tawarruq, where the round-trip of the same asset disguises an interest-bearing loan.
+// The semantic engine builds the flow graph and refuses cyclic structures that no
+// single-contract check could see. This is the graph-based invariant checker.
+
+#[derive(Debug, Clone)]
+pub struct Bundle {
+    pub name: String,
+    pub sections: Vec<BundleSection>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum BundleSection {
+    Meta(Vec<Kv>),
+    Parties(Vec<Party>),
+    Legs(Vec<Leg>),
+}
+
+/// One leg of a composite: `<id>: <kind> { from; to; asset; payment; price }`.
+/// `kind` is a fiqh sale/agency form (murabahah, bay, musawamah, wakalah, …); the
+/// engine reasons over the *flows*, not the label.
+#[derive(Debug, Clone)]
+pub struct Leg {
+    pub id: String,
+    pub kind: String,
+    pub kvs: Vec<Kv>,
+    pub span: Span,
+}
+
+impl Bundle {
+    pub fn meta(&self) -> Vec<&Kv> {
+        self.sections
+            .iter()
+            .find_map(|s| if let BundleSection::Meta(m) = s { Some(m) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn parties(&self) -> Vec<&Party> {
+        self.sections
+            .iter()
+            .find_map(|s| if let BundleSection::Parties(p) = s { Some(p) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn legs(&self) -> Vec<&Leg> {
+        self.sections
+            .iter()
+            .find_map(|s| if let BundleSection::Legs(l) = s { Some(l) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Str(String),

@@ -1,0 +1,46 @@
+// NEGATIVE CONTROL — organized tawarruq (tawarruq munazzam).
+//
+// The bank sells metal to the customer on credit (deferred, marked up). The customer sells
+// the metal spot to broker A for cash, and broker A passes it back to the bank. The metal
+// never leaves the bank's orbit — it cycles bank -> customer -> brokerA -> bank — so the
+// whole arrangement is a debt dressed as commodity trades. The customer walks away with
+// cash now and a larger deferred debt: riba by composition.
+//
+// OIC Int'l Islamic Fiqh Academy Resolution 179 (19/5), 2009, ruled organized tawarruq
+// impermissible. The compiler must refuse with INAH-2.
+bundle TawarruqMunazzam {
+  meta {
+    basis: "organized tawarruq — monetizing a commodity through an arranged ring";
+    regime: islamic;
+  }
+
+  parties {
+    bank: financier;
+    customer: client;
+    brokerA: intermediary;
+  }
+
+  legs {
+    credit_sale: murabahah {
+      from: bank;
+      to: customer;
+      asset: metal;
+      payment: deferred;
+      price: 11000;
+    }
+    cash_sale: bay {
+      from: customer;
+      to: brokerA;
+      asset: metal;
+      payment: spot;
+      price: 10000;
+    }
+    ring_return: bay {
+      from: brokerA;
+      to: bank;
+      asset: metal;
+      payment: spot;
+      price: 10000;
+    }
+  }
+}
