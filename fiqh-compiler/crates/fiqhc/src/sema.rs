@@ -63,6 +63,7 @@ pub enum Class {
     MusharakahMutanaqisah,
     Mudarabah,
     IjarahImbt,
+    CommercialEscrow,
     Unknown(String),
 }
 
@@ -72,10 +73,26 @@ impl Class {
             "musharakah_mutanaqisah" => Class::MusharakahMutanaqisah,
             "mudarabah" => Class::Mudarabah,
             "ijarah_imbt" => Class::IjarahImbt,
+            "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
     }
+
+    /// The legal regime this class belongs to.
+    pub fn regime(&self) -> &'static str {
+        match self {
+            Class::CommercialEscrow => "common_law",
+            _ => "islamic",
+        }
+    }
 }
+
+// Common-law doctrine citations (real leading authorities; flagged for human verification).
+const C_PENALTY: &str =
+    "penalty doctrine: Dunlop v New Garage [1915] AC 79; Cavendish Square v Makdessi [2015] UKSC 67 [verify]";
+const C_CERTAINTY: &str = "certainty of terms: Scammell & Nephew v Ouston [1941] AC 251 [verify]";
+const C_CONSIDERATION: &str = "consideration must move from the promisee: Currie v Misa (1875) LR 10 Ex 153 [verify]";
+const C_GOODFAITH: &str = "duty of good faith (UCC sec. 1-304; Yam Seng v ITC [2013] EWHC 111) [verify]";
 
 /// Run the engine. Returns all diagnostics; callers gate codegen on the presence
 /// of any `Severity::Error`.
@@ -91,22 +108,44 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         ));
     }
 
-    check_role_separation(spec, &mut d);
-    check_oracle_cfg(spec, &mut d);
+    let class = Class::from_str(&spec.class);
 
-    match Class::from_str(&spec.class) {
-        Class::MusharakahMutanaqisah => check_musharakah(spec, &mut d),
-        Class::Mudarabah => check_mudarabah(spec, &mut d),
-        Class::IjarahImbt => check_ijarah(spec, &mut d),
-        Class::Unknown(s) => d.push(Diagnostic::error(
+    // The same machinery — declare a rule-base R, refuse specs inconsistent with R, generate the
+    // enforcing contract — applies across legal regimes. Only R differs (this is the universality
+    // claim). A declared regime that contradicts the class is itself an inconsistency.
+    if let Class::Unknown(s) = &class {
+        d.push(Diagnostic::error(
             "CLASS-1",
             spec.span,
-            format!(
-                "unknown instrument class '{}' — the engine has no rule-base for it",
-                s
-            ),
+            format!("unknown instrument class '{}' — the engine has no rule-base for it", s),
             "",
-        )),
+        ));
+        return d;
+    }
+    if let Some(dr) = meta_get(spec, "regime").and_then(|e| e.as_ident()) {
+        if dr != class.regime() {
+            d.push(Diagnostic::error(
+                "REGIME-1",
+                spec.span,
+                format!("declared regime '{}' does not match the '{}' regime of class '{}'", dr, class.regime(), spec.class),
+                "",
+            ));
+        }
+    }
+
+    match class {
+        Class::MusharakahMutanaqisah | Class::Mudarabah | Class::IjarahImbt => {
+            check_role_separation(spec, &mut d);
+            check_oracle_cfg(spec, &mut d);
+            match Class::from_str(&spec.class) {
+                Class::MusharakahMutanaqisah => check_musharakah(spec, &mut d),
+                Class::Mudarabah => check_mudarabah(spec, &mut d),
+                Class::IjarahImbt => check_ijarah(spec, &mut d),
+                _ => {}
+            }
+        }
+        Class::CommercialEscrow => check_commercial(spec, &mut d),
+        Class::Unknown(_) => {}
     }
 
     d
@@ -577,6 +616,106 @@ fn check_ijarah(spec: &Spec, d: &mut Vec<Diagnostic>) {
     require_invariants(
         spec,
         &["rent_for_usufruct", "lessor_bears_ownership_risk", "transfer_separate_from_lease", "no_late_penalty_interest"],
+        d,
+    );
+}
+
+// --- Commercial escrow (common law) — the universality claim + the judiciary engine ---
+
+fn dispute_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {
+    spec.dispute_cfg().into_iter().find(|k| k.key == key).map(|k| &k.val)
+}
+
+fn check_commercial(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    // parties: a depositor (payer), a beneficiary (payee), and an arbiter (the tribunal)
+    for (role, desc) in [
+        ("depositor", "depositor / payer"),
+        ("beneficiary", "beneficiary / payee"),
+        ("arbiter", "arbiter / tribunal"),
+    ] {
+        if role_party(spec, role).is_none() {
+            d.push(Diagnostic::error(
+                "PARTY-1",
+                spec.span,
+                format!("a commercial escrow requires a party with role '{}' ({})", role, desc),
+                "",
+            ));
+        }
+    }
+
+    // consideration must move between DISTINCT parties
+    let dep = role_party(spec, "depositor").map(|p| p.name.clone());
+    let ben = role_party(spec, "beneficiary").map(|p| p.name.clone());
+    if let (Some(dn), Some(bn)) = (&dep, &ben) {
+        if dn == bn {
+            d.push(Diagnostic::error(
+                "CONSID-1",
+                spec.span,
+                "consideration must move between distinct parties; depositor and beneficiary are the same",
+                C_CONSIDERATION,
+            ));
+        }
+    }
+
+    // certainty of terms + the penalty doctrine, from the `release` block
+    match find_return(spec, "release") {
+        None => d.push(Diagnostic::error(
+            "TERMS-1",
+            spec.span,
+            "a commercial escrow requires returns { release { amount; condition; damages } }",
+            C_CERTAINTY,
+        )),
+        Some(r) => {
+            match kv_get(&r.kvs, "amount") {
+                Some(e) if e.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error(
+                    "CERTAINTY-1",
+                    r.span,
+                    "the escrow amount must be a definite, non-zero sum (certainty of terms)",
+                    C_CERTAINTY,
+                )),
+            }
+            if kv_get(&r.kvs, "condition").and_then(|e| e.as_ident()).is_none() {
+                d.push(Diagnostic::error(
+                    "CERTAINTY-2",
+                    r.span,
+                    "the release condition must be definite",
+                    C_CERTAINTY,
+                ));
+            }
+            match kv_get(&r.kvs, "damages") {
+                Some(e) if e.as_ident() == Some("liquidated") => {}
+                Some(e) if e.as_ident() == Some("penalty") => d.push(Diagnostic::error(
+                    "PENALTY-1",
+                    r.span,
+                    "a penalty clause is unenforceable; damages must be a genuine pre-estimate (liquidated), not a penalty in terrorem",
+                    C_PENALTY,
+                )),
+                Some(_) => d.push(Diagnostic::error(
+                    "PENALTY-1",
+                    r.span,
+                    "damages must be 'liquidated' (a genuine pre-estimate of loss)",
+                    C_PENALTY,
+                )),
+                None => {}
+            }
+        }
+    }
+
+    // the dispute-resolution / judiciary engine must be present
+    match dispute_get(spec, "remedy") {
+        Some(e) if e.as_ident() == Some("arbiter_ruling") => {}
+        _ => d.push(Diagnostic::error(
+            "DISPUTE-1",
+            spec.span,
+            "a commercial contract must declare dispute { remedy: arbiter_ruling } — the arbitration / judiciary engine",
+            C_GOODFAITH,
+        )),
+    }
+
+    require_invariants(
+        spec,
+        &["certainty_of_terms", "no_penalty_clause", "consideration_present", "dispute_resolution_present"],
         d,
     );
 }

@@ -1,0 +1,38 @@
+// Negative control (common law): an escrow with a penalty clause and indefinite terms, and no
+// real dispute resolution. The penalty doctrine and the certainty requirement make it
+// unenforceable; the engine MUST refuse to lower it.
+
+instrument FakeEscrow : commercial_escrow {
+  meta {
+    regime: common_law;
+    basis: "an escrow with a penalty clause and indefinite terms";
+  }
+
+  parties {
+    payer    : depositor;
+    payee    : beneficiary;
+    tribunal : arbiter;
+  }
+
+  capital {
+    payer : 10000 bps;
+  }
+
+  returns {
+    release {
+      amount: 0;                 // CERTAINTY-1: an indefinite sum
+      damages: penalty;          // PENALTY-1: an unenforceable penalty in terrorem
+    }
+  }
+
+  dispute {
+    remedy: self_help;           // DISPUTE-1: not an adjudicated remedy
+  }
+
+  // deliberately omits the required invariants -> INV-1
+
+  lifecycle {
+    fund;
+    release;
+  }
+}

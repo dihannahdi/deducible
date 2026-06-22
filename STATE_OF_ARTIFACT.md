@@ -93,3 +93,24 @@ the depressed hbar price). The oracle issues no fatwa: the committee composition
 width are auditable governance choices for a qualified scholar to ratify. See
 `paper/algorithmic_jurisprudence.md` §10; oracle `contracts/ConsensusValuationOracle.sol`;
 agents `agents/valuer_agent.js` + `scripts/consensus_demo.js`.
+
+---
+
+## Update (iter 13) — Visions #3 & #4: universality across legal regimes, and a ledger-agnostic backend
+
+The same machinery now spans legal traditions and any infrastructure.
+
+| # | Gate | Mechanism | Verification |
+|---|------|-----------|--------------|
+| U1 | Universality across regimes | a `common_law` regime + `commercial_escrow` class; rule-base parallels the Islamic one (certainty↔gharar, penalty↔riba, consideration↔ʿiwaḍ) | `cargo test`; penalty/indefinite control refused (`PENALTY-1`,`CERTAINTY-1`,`DISPUTE-1`); `REGIME-1` on a class/regime mismatch |
+| U2 | Code-based judiciary engine | regime-neutral arbiter-adjudicated release/refund (generalised *khiyar*/*faskh*) | `CommercialEscrowGen`, 5 Hardhat tests green |
+| U3 | Multi-target codegen | `fiqhc build --target solidity\|manifest\|all`; a portable JSON invariant manifest | manifests emitted for all 5 specs; `tests/manifest.rs` |
+| U4 | Real-time invariant injection | `invariant_gateway` microservice: `/enforce` checks proposed terms against the manifest, `/compile` = spec→verdict | live in-container: compliant ALLOWED; disguised loan REFUSED (4 cited); common-law penalty REFUSED (3 cited) |
+
+All four expansion visions now stand. Compliance-by-construction is: a property of a **language**
+(#1), defended by a **zero-trust measurement of gharar** (#2), **universal across traditions**
+with a regime-neutral judiciary (#3), and **injectable into any ledger or database** (#4). Code:
+`fiqh-compiler/` (commercial_escrow + `--target manifest`), `services/invariant_gateway.js`,
+`agents/`, `contracts/ConsensusValuationOracle.sol`. Paper §10–§12 in
+`paper/algorithmic_jurisprudence.md`. The institutional gate — scholarly/legal ratification and
+adoption — remains, honestly, with people. *Allahu a'lam.*

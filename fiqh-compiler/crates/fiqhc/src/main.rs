@@ -88,10 +88,12 @@ fn main() {
         "build" => {
             let mut spec_path: Option<String> = None;
             let mut root = String::from("..");
+            let mut target = String::from("all"); // solidity | manifest | all
             let mut it = args.iter().skip(2);
             while let Some(a) = it.next() {
                 match a.as_str() {
                     "--root" => root = it.next().cloned().unwrap_or_else(|| usage()),
+                    "--target" => target = it.next().cloned().unwrap_or_else(|| usage()),
                     _ => {
                         if spec_path.is_none() {
                             spec_path = Some(a.clone());
@@ -123,12 +125,25 @@ fn main() {
                     exit(1);
                 }
             };
-            let sol = write_out(&root, &format!("contracts/generated/{}.sol", g.contract_name), &g.sol);
-            let test = write_out(&root, &format!("test/generated/{}.test.js", g.contract_name), &g.test_js);
-            let desc = write_out(&root, &format!("fiqh-compiler/out/{}.deploy.json", g.contract_name), &g.descriptor);
+            let want_sol = target == "solidity" || target == "all";
+            let want_manifest = target == "manifest" || target == "all";
+            if !want_sol && !want_manifest {
+                eprintln!("fiqhc: unknown --target '{}' (use solidity | manifest | all)", target);
+                exit(2);
+            }
+            let mut emitted: Vec<String> = Vec::new();
+            if want_sol {
+                emitted.push(write_out(&root, &format!("contracts/generated/{}.sol", g.contract_name), &g.sol));
+                emitted.push(write_out(&root, &format!("test/generated/{}.test.js", g.contract_name), &g.test_js));
+                emitted.push(write_out(&root, &format!("fiqh-compiler/out/{}.deploy.json", g.contract_name), &g.descriptor));
+            }
+            if want_manifest {
+                let manifest = fiqhc::codegen::build_manifest(&spec);
+                emitted.push(write_out(&root, &format!("fiqh-compiler/out/{}.manifest.json", g.contract_name), &manifest));
+            }
             println!(
-                "emitted from '{}' ({}) — consistent-by-construction:\n    {}\n    {}\n    {}",
-                spec.name, g.instrument, sol, test, desc
+                "emitted from '{}' ({}) — consistent-by-construction:\n    {}",
+                spec.name, g.instrument, emitted.join("\n    ")
             );
         }
         "nl" => {

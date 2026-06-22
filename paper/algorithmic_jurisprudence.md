@@ -221,6 +221,56 @@ measurable condition. What remains a governance choice — who sits on the commi
 band's width — is now explicit and auditable, which is the most an engine can honestly offer; a
 qualified scholar's ratification of those choices remains, as ever, theirs. *Allahu a'lam.*
 
+## 11. Vision #3 — beyond Islamic finance: universality, and a code-based judiciary
+
+Form-over-substance, and the tension between rigidity and flexibility, are not monopolies of
+Islamic finance; common-law commerce has its own doctrines against unjust terms. We tested the
+claim that the SAME machinery — declare a rule-base R, refuse specifications inconsistent with
+R, emit the enforcing contract — applies across legal regimes. We added a `common_law` regime
+and a `commercial_escrow` class. Its rule-base parallels the Islamic one with a striking
+symmetry: **certainty of terms ↔ gharar**; the **penalty doctrine** (damages must be a genuine
+pre-estimate, not a penalty *in terrorem*) **↔ riba's** prohibition of unjust excess;
+**consideration ↔ ʿiwaḍ**; good faith. The compiler refuses a penalty/indefinite escrow exactly
+as it refuses a disguised riba (codes `PENALTY-1`, `CERTAINTY-1`, `DISPUTE-1`), citing the
+leading authorities (*Cavendish v Makdessi* [2015]; *Scammell v Ouston* [1941]) — flagged
+`[verify]` for a lawyer, as the Islamic citations are flagged for a scholar. A declared regime
+that contradicts the class is itself refused (`REGIME-1`).
+
+The generated `CommercialEscrowGen` carries a regime-NEUTRAL **code-based judiciary engine**: a
+deposit is held, released on a definite condition, and — should a dispute arise — adjudicated by
+an arbiter whose ruling either releases to the beneficiary or refunds the depositor. This is the
+same machinery that encodes *khiyar al-ʿayb* and *faskh*, abstracted from any one tradition: a
+prototype for the automated dispute resolution an arbitration tribunal might adopt. Five
+generated tests prove release-on-condition, the arbiter's ruling either way, that only the
+arbiter may rule, and that release is barred while a dispute is open.
+
+## 12. Vision #4 — a ledger-agnostic backend: legal invariants, injected in real time
+
+The validation layer need not be bound to Solidity or to one chain. The compiler now emits,
+beside the contract, a **portable invariant manifest** (`fiqhc build --target manifest`): the
+same facts the engine checks, rendered as machine-checkable constraints
+`{code, field, op, value, citation}`. The Solidity target serves EVM ledgers (Ethereum, Hedera,
+Polygon); the manifest serves everything else — a non-EVM ledger, or a traditional enterprise
+database.
+
+An **invariant gateway** microservice consumes the manifest and injects the rule-base into any
+backend in real time. Before a contract's terms are committed, a system POSTs them to
+`/enforce`; a compliant transition is allowed, a non-compliant one is refused with the cited
+rule — exactly as the compiler would refuse it. We demonstrated this live: a compliant musharakah
+term-set was allowed; a disguised loan (`capital_guarantee: bank`, `loss: none`, rent on
+principal, self-named price) was refused with four cited violations; a common-law escrow bearing
+a penalty clause was refused with three. A `/compile` endpoint exposes the whole pipeline as a
+service — a spec in, a fiqh-cited verdict out. Compliance by construction thus reaches beyond the
+chain: it becomes a gate any ledger or database can place in front of its writes.
+
+Taken together, the four expansions carry one idea to its conclusion. *Compliance by
+construction* began as a property of one contract; it is now a property of a **language**
+(Vision #1), defended by a **zero-trust measurement of the very uncertainty it once assumed**
+(Vision #2), shown **universal across legal traditions** with a regime-neutral judiciary
+(Vision #3), and **injectable into any infrastructure** (Vision #4). What no engine can supply —
+the scholar's ratification of the rule-base, the law's recognition of title, a community's
+adoption — remains, honestly, with people. *Allahu a'lam.*
+
 ## References
 
 - Vaswani, A., et al. (2017). *Attention Is All You Need.* NeurIPS.
@@ -234,3 +284,8 @@ qualified scholar's ratification of those choices remains, as ever, theirs. *All
 - OIC International Islamic Fiqh Academy, Resolution 179 (19/5), Sharjah, April 2009.
 - Qur'an, al-Baqarah 2:275 (prohibition of riba) [scholar-verify]; the prohibition of *gharar*
   (Sahih Muslim, Kitab al-Buyu') [scholar-verify].
+- *Dunlop Pneumatic Tyre v New Garage* [1915] AC 79; *Cavendish Square v Makdessi* [2015]
+  UKSC 67 (penalty doctrine) [verify].
+- *Scammell & Nephew v Ouston* [1941] AC 251 (certainty of terms) [verify]; *Currie v Misa*
+  (1875) LR 10 Ex 153 (consideration) [verify]; *Yam Seng v ITC* [2013] EWHC 111 (good faith);
+  UCC §1-304 [verify].

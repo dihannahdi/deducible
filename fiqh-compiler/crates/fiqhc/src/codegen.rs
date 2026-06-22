@@ -8,6 +8,7 @@
 
 use crate::ast::*;
 use crate::sema::Class;
+use serde_json::json;
 
 pub struct Generated {
     pub instrument: String,
@@ -22,8 +23,55 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::MusharakahMutanaqisah => gen_musharakah(spec),
         Class::Mudarabah => gen_mudarabah(spec),
         Class::IjarahImbt => gen_ijarah(spec),
+        Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
+}
+
+/// A portable, ledger-agnostic invariant manifest (Vision #4). The same facts the engine
+/// checks are emitted as machine-checkable constraints `{code, field, op, value, citation}`,
+/// so the invariants can be enforced against a proposed `terms` object on ANY backend — a
+/// non-EVM ledger or a traditional database — not only the generated Solidity. A gateway
+/// evaluates each constraint before a transition is committed; a violation is refused exactly
+/// as the compiler would refuse it. The manifest carries no fatwa, only the cited rule-base.
+pub fn build_manifest(spec: &Spec) -> String {
+    let class = Class::from_str(&spec.class);
+    let mut c: Vec<serde_json::Value> = Vec::new();
+    let mut add = |code: &str, field: &str, op: &str, value: serde_json::Value, cite: &str| {
+        c.push(json!({ "code": code, "field": field, "op": op, "value": value, "citation": cite }));
+    };
+    match class {
+        Class::MusharakahMutanaqisah => {
+            add("RIBA-1", "risk.capital_guarantee", "eq", json!("none"), "al-Baqarah 2:275; AAOIFI SS 12 [scholar-verify]");
+            add("RISK-1", "risk.loss", "eq", json!("proportional_to_ownership"), "AAOIFI SS 12 [scholar-verify]");
+            add("RIBA-2", "returns.rent.basis", "ne", json!("principal"), "al-Baqarah 2:275 [scholar-verify]");
+            add("GHARAR-1", "returns.buyout.priceSource", "eq", json!("oracle"), "prohibition of gharar [scholar-verify]");
+        }
+        Class::Mudarabah => {
+            add("RIBA-1", "risk.capital_guarantee", "eq", json!("none"), "AAOIFI SS 13 [scholar-verify]");
+            add("RISK-2", "risk.loss", "eq", json!("on_rabb_al_mal"), "AAOIFI SS 13 [scholar-verify]");
+            add("PROFIT-1", "returns.profit.split", "eq", json!("ratio"), "AAOIFI SS 13 [scholar-verify]");
+        }
+        Class::IjarahImbt => {
+            add("RIBA-2", "returns.rent.basis", "eq", json!("usufruct"), "AAOIFI SS 9 [scholar-verify]");
+            add("RISK-3", "risk.loss", "eq", json!("on_lessor"), "AAOIFI SS 9 [scholar-verify]");
+            add("RIBA-3", "returns.rent.late_penalty", "eq", json!("none"), "no interest on a debt [scholar-verify]");
+        }
+        Class::CommercialEscrow => {
+            add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
+            add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
+            add("DISPUTE-1", "dispute.remedy", "eq", json!("arbiter_ruling"), "good faith / arbitration [verify]");
+        }
+        Class::Unknown(_) => {}
+    }
+    let manifest = json!({
+        "instrument": spec.class,
+        "regime": class.regime(),
+        "name": spec.name,
+        "constraints": c,
+        "note": "Portable invariant manifest. Enforce each constraint against a proposed terms object before committing it to any ledger or database. The engine proves consistency with a declared rule-base; it issues no fatwa.",
+    });
+    serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| "{}".to_string())
 }
 
 // --- helpers ---
@@ -912,5 +960,187 @@ fn ijarah_descriptor(name: &str, rate: u64, term: u64) -> String {
         name = name,
         rate = rate,
         term = term,
+    )
+}
+
+// =====================================================================================
+// Commercial Escrow (common law) — the universality of compliance-by-construction beyond
+// Islamic finance, and a regime-NEUTRAL judiciary engine: deposit held in escrow, released on
+// a definite condition, with arbiter-adjudicated remedy (release or refund). The same machinery
+// that encodes khiyar/faskh serves common-law arbitration — a prototype "code-based judiciary."
+// =====================================================================================
+
+fn escrow_amount(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "release")
+        .and_then(|r| kv_get(&r.kvs, "amount"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(1_000_000)
+}
+
+fn gen_commercial(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let amount = escrow_amount(spec);
+    let mut s = provenance_doc(spec, &format!("{} — commercial escrow with a code-based judiciary engine (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(COMMERCIAL_BODY);
+    s.push_str("}\n");
+    let test_js = gen_commercial_test(&name, amount);
+    let descriptor = commercial_descriptor(&name, amount);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const COMMERCIAL_BODY: &str = r#"    address public immutable depositor;
+    address public immutable beneficiary;
+    address public immutable arbiter;
+    uint256 public immutable amount;
+
+    uint256 public deposited;
+    bool public conditionMet;
+    bool public disputed;
+    bool public closed;
+
+    modifier onlyDepositor() { require(msg.sender == depositor, "only depositor"); _; }
+    modifier onlyArbiter() { require(msg.sender == arbiter, "only arbiter"); _; }
+    modifier open() { require(!closed, "closed"); _; }
+
+    event Funded(uint256 amount);
+    event ConditionConfirmed(address by);
+    event Released(address to, uint256 amount);
+    event Refunded(address to, uint256 amount);
+    event DisputeRaised(address by);
+    event ArbiterRuling(bool forBeneficiary);
+
+    /// @dev INVARIANT consideration_present: depositor and beneficiary must be distinct.
+    constructor(address _beneficiary, address _arbiter, uint256 _amount) {
+        require(_beneficiary != address(0) && _arbiter != address(0), "zero addr");
+        require(_amount > 0, "amount"); // INVARIANT certainty_of_terms: a definite sum
+        require(_beneficiary != msg.sender, "consideration: distinct parties");
+        depositor = msg.sender; beneficiary = _beneficiary; arbiter = _arbiter; amount = _amount;
+    }
+
+    function fund() external payable onlyDepositor open {
+        require(deposited == 0, "funded");
+        require(msg.value == amount, "must deposit exactly the agreed amount");
+        deposited = msg.value; emit Funded(msg.value);
+    }
+
+    function confirmCondition() external onlyDepositor open {
+        require(deposited == amount, "not funded");
+        conditionMet = true; emit ConditionConfirmed(msg.sender);
+    }
+
+    function release() external open {
+        require(msg.sender == depositor || msg.sender == beneficiary, "only a party");
+        require(conditionMet, "condition not met");
+        require(!disputed, "under dispute");
+        closed = true;
+        (bool ok, ) = beneficiary.call{value: deposited}(""); require(ok, "release xfer");
+        emit Released(beneficiary, deposited);
+    }
+
+    /// @dev the judiciary engine: either party may invoke the tribunal.
+    function raiseDispute() external open {
+        require(msg.sender == depositor || msg.sender == beneficiary, "only a party");
+        disputed = true; emit DisputeRaised(msg.sender);
+    }
+
+    /// @dev INVARIANT dispute_resolution_present: the arbiter's ruling is the remedy
+    ///      (release to the beneficiary, or refund to the depositor). Regime-neutral.
+    function arbiterRuling(bool forBeneficiary) external onlyArbiter open {
+        require(disputed, "no dispute");
+        closed = true;
+        address to = forBeneficiary ? beneficiary : depositor;
+        (bool ok, ) = to.call{value: deposited}(""); require(ok, "ruling xfer");
+        emit ArbiterRuling(forBeneficiary);
+        if (forBeneficiary) { emit Released(beneficiary, deposited); } else { emit Refunded(depositor, deposited); }
+    }
+"#;
+
+fn gen_commercial_test(name: &str, amount: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Commercial Escrow (common law). Proves compliance-by-construction
+// is universal across legal regimes, and exercises the regime-neutral code-based judiciary
+// engine (arbiter-adjudicated release or refund).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — commercial escrow + judiciary engine", function () {{
+  let depositor, beneficiary, arbiter, c;
+  const AMOUNT = {amount}n;
+
+  beforeEach(async function () {{
+    [depositor, beneficiary, arbiter] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(depositor).deploy(beneficiary.address, arbiter.address, AMOUNT);
+    await c.waitForDeployment();
+  }});
+
+  it("releases to the beneficiary once the definite condition is met", async function () {{
+    await c.connect(depositor).fund({{ value: AMOUNT }});
+    await c.connect(depositor).confirmCondition();
+    await expect(c.connect(beneficiary).release()).to.emit(c, "Released").withArgs(beneficiary.address, AMOUNT);
+    expect(await c.closed()).to.equal(true);
+  }});
+
+  it("judiciary engine: the arbiter may rule for the beneficiary", async function () {{
+    await c.connect(depositor).fund({{ value: AMOUNT }});
+    await c.connect(depositor).raiseDispute();
+    await expect(c.connect(arbiter).arbiterRuling(true)).to.emit(c, "ArbiterRuling").withArgs(true);
+  }});
+
+  it("judiciary engine: the arbiter may refund the depositor", async function () {{
+    await c.connect(depositor).fund({{ value: AMOUNT }});
+    await c.connect(beneficiary).raiseDispute();
+    await expect(c.connect(arbiter).arbiterRuling(false)).to.emit(c, "Refunded").withArgs(depositor.address, AMOUNT);
+  }});
+
+  it("only the arbiter may rule on a dispute", async function () {{
+    await c.connect(depositor).fund({{ value: AMOUNT }});
+    await c.connect(depositor).raiseDispute();
+    await expect(c.connect(depositor).arbiterRuling(true)).to.be.revertedWith("only arbiter");
+  }});
+
+  it("release is blocked while a dispute is open", async function () {{
+    await c.connect(depositor).fund({{ value: AMOUNT }});
+    await c.connect(depositor).confirmCondition();
+    await c.connect(depositor).raiseDispute();
+    await expect(c.connect(beneficiary).release()).to.be.revertedWith("under dispute");
+  }});
+}});
+"#,
+        name = name,
+        amount = amount,
+    )
+}
+
+fn commercial_descriptor(name: &str, amount: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "commercial_escrow",
+  "regime": "common_law",
+  "contract": "{name}",
+  "operatorRole": "depositor",
+  "oracle": null,
+  "constructorAbi": ["address","address","uint256"],
+  "constructorArgs": ["@beneficiary","@arbiter",{amount}],
+  "accounts": ["beneficiary","arbiter"],
+  "funding": {{ "fund": {amount} }},
+  "lifecycle": [
+    {{ "as": "depositor", "fn": "confirmCondition", "note": "definite condition met" }},
+    {{ "as": "depositor", "fn": "release", "note": "escrow released to beneficiary" }}
+  ],
+  "reads": []
+}}
+"#,
+        name = name,
+        amount = amount,
     )
 }

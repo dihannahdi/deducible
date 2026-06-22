@@ -1,0 +1,50 @@
+// Commercial escrow under the COMMON LAW regime — demonstrating that compliance-by-construction
+// is not a monopoly of Islamic finance. The same engine refuses a penalty clause (penalty
+// doctrine) and indefinite terms (certainty), and emits a regime-neutral code-based judiciary
+// engine. Citations are leading authorities, flagged [verify] for a lawyer's confirmation.
+
+instrument CommercialEscrow : commercial_escrow {
+  meta {
+    regime: common_law;
+    basis: "common-law commercial escrow with arbitration";
+    certainty_ref: "Scammell & Nephew v Ouston [1941] AC 251";   // [verify]
+    penalty_ref: "Cavendish Square v Makdessi [2015] UKSC 67";   // [verify]
+    currency: tinybar;
+  }
+
+  parties {
+    payer    : depositor;
+    payee    : beneficiary;
+    tribunal : arbiter;        // the tribunal / arbitrator
+  }
+
+  capital {
+    payer : 10000 bps;         // the depositor funds the escrow
+  }
+
+  returns {
+    release {
+      amount: 1000000;             // a definite sum (certainty of terms)
+      condition: delivery_confirmed;
+      damages: liquidated;         // a genuine pre-estimate, NOT a penalty in terrorem
+    }
+  }
+
+  // the code-based judiciary engine (regime-neutral — the same machinery as khiyar/faskh)
+  dispute {
+    forum: arbiter;
+    remedy: arbiter_ruling;        // release-or-refund adjudicated by the tribunal
+  }
+
+  invariant certainty_of_terms         { release.amount != 0 }
+  invariant no_penalty_clause          { release.damages == liquidated }
+  invariant consideration_present      { payer != payee }
+  invariant dispute_resolution_present { dispute.remedy == arbiter_ruling }
+  invariant good_faith                 { good_faith == required }
+
+  lifecycle {
+    fund;
+    confirmCondition;
+    release;
+  }
+}
