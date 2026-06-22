@@ -179,6 +179,48 @@ a backend abstracted across ledgers. The institutional gate — scholarly ratifi
 rule-base, legal-title recognition, adoption — a compiler cannot cross; it can only make the
 conditions auditable, and now, unrepresentable when violated.
 
+## 10. Vision #2 — a zero-trust valuation oracle: gharar as a computed quantity
+
+The prior artifact, and §8 above, named the single trusted valuer as the residual gharar locus.
+We now report a direct attack on it and — keeping faith with the primitive — fold it into the
+compiler.
+
+**The contract.** `ConsensusValuationOracle` implements the same `IValuationOracle` interface,
+so it drops into every generated instrument unchanged. It registers a committee of independent
+attestors; each attestor SIGNS `(round, value, oracle, chainId)`, and the oracle recovers the
+signer cryptographically (`ecrecover`) and checks committee membership — so the relayer who
+submits a batch is trusted with nothing. The fair value is the *median* of the attestations
+that fall within an agreed dispersion band; values outside it are rejected as outliers.
+
+**Gharar as a computed quantity.** A price is usable only if it is *ma'lum* (determinable). We
+make this executable: if fewer than `quorum` independent attestors agree within
+`ghararBoundBps` of the median, the value is *majhul* — that is gharar — and `fairValue()`
+reverts. The gharar boundary ceases to be a hidden assumption and becomes a quantity computed
+on-chain from the dispersion of independent attestations. A contract cannot transact on an
+undeterminable value.
+
+**The DSL declares it.** An instrument now declares its valuation regime:
+`oracle { mode: consensus; committee: 5; quorum: 3; gharar_bound_bps: 500; }`. The compiler
+validates the parameters (quorum ≤ committee; bound ∈ (0,10000)) and wires the consensus oracle
+into the deploy descriptor — it emits not only the contract but its zero-trust valuation layer.
+
+**Autonomous fact-finding.** Off-chain, a committee of autonomous agents performs the
+fact-finding. Each agent reasons independently over its OWN market evidence via an LLM
+(DeepSeek), produces a fair-value estimate, and signs it; no agent sees the others, and
+consensus emerges on-chain. In a local end-to-end run, five agents on a convergent scenario
+resolved a consensus median of 1,000,000, off which a generated `MusharakahConsensus` ran its
+full lifecycle (ownership 80% → 60% at the consensus price); a divergent scenario produced a
+spread the band could not contain, and the oracle correctly refused a value (*majhul*). The
+on-chain logic is proven by Hardhat tests (median, outlier rejection, signature verification,
+quorum, sequential rounds, and the gharar gate). The live testnet run awaits a faucet top-up;
+the path is one command through the same generic runner.
+
+This shifts the trust boundary from one valuer's word to the *agreement* of an independent
+committee, and turns the residual gharar from an admitted assumption into an enforced,
+measurable condition. What remains a governance choice — who sits on the committee, and the
+band's width — is now explicit and auditable, which is the most an engine can honestly offer; a
+qualified scholar's ratification of those choices remains, as ever, theirs. *Allahu a'lam.*
+
 ## References
 
 - Vaswani, A., et al. (2017). *Attention Is All You Need.* NeurIPS.

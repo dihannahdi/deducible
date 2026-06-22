@@ -72,3 +72,24 @@ by construction.
 Epistemics unchanged and central: the compiler proves consistency with a human-authored,
 citation-bearing rule-base; **it issues no fatwa**. The rule-base awaits a qualified scholar's
 ratification. Write-up: `paper/algorithmic_jurisprudence.md`. Compiler: `fiqh-compiler/`.
+
+---
+
+## Update (iter 12) — Vision #2: zero-trust consensus valuation oracle (gharar as a computed quantity)
+
+The residual gharar — the single trusted valuer — is now attacked directly and folded into the
+compiler. The trust boundary moves from one valuer's word to the *agreement* of an independent
+committee, and the gharar boundary becomes a quantity computed on-chain.
+
+| # | Gate | Mechanism | Verification |
+|---|------|-----------|--------------|
+| Z1 | Gharar as a computed quantity | committee median within a dispersion band; beyond it the value is *majhul* | `ConsensusValuationOracle.fairValue()` reverts on over-dispersion |
+| Z2 | Zero-trust in the relayer | each attestation is signed; `ecrecover` + committee-membership check | 7 Hardhat tests (median, outlier, gharar, non-committee, double-sign, quorum, sequence) |
+| Z3 | Declared in the DSL | `oracle { mode: consensus; committee; quorum; gharar_bound_bps }` | sema validates (quorum ≤ committee, bound ∈ (0,10000)); codegen wires it into the descriptor |
+| Z4 | Autonomous fact-finding | 5 independent DeepSeek agents reason + sign; consensus emerges on-chain | local run: convergent → median 1,000,000 → `MusharakahConsensus` lifecycle (80%→60%); divergent → *majhul* |
+
+Live testnet run deferred to a faucet top-up (operator ~22 ℏ; one contract-create ≈ 12–35 ℏ at
+the depressed hbar price). The oracle issues no fatwa: the committee composition and the band's
+width are auditable governance choices for a qualified scholar to ratify. See
+`paper/algorithmic_jurisprudence.md` §10; oracle `contracts/ConsensusValuationOracle.sol`;
+agents `agents/valuer_agent.js` + `scripts/consensus_demo.js`.

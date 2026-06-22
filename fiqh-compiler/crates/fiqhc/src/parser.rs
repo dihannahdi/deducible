@@ -126,6 +126,12 @@ impl Parser {
                 let kvs = self.parse_kv_list()?;
                 Ok(Section::Risk(kvs))
             }
+            "oracle" => {
+                self.bump();
+                self.expect(&Tok::LBrace)?;
+                let kvs = self.parse_kv_list()?;
+                Ok(Section::Oracle(kvs))
+            }
             "invariant" => self.parse_invariant(),
             "rescission" => self.parse_rescission(),
             "lifecycle" => self.parse_lifecycle(),

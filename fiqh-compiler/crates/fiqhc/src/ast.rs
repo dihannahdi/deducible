@@ -35,6 +35,7 @@ pub enum Section {
     Capital(Vec<CapItem>),
     Returns(Vec<RetBlock>),
     Risk(Vec<Kv>),
+    Oracle(Vec<Kv>),
     Invariant(Invariant),
     Rescission(Vec<RescBlock>),
     Lifecycle(Vec<Step>),
@@ -208,6 +209,14 @@ impl Spec {
         self.sections
             .iter()
             .find_map(|s| if let Section::Risk(r) = s { Some(r) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn oracle_cfg(&self) -> Vec<&Kv> {
+        self.sections
+            .iter()
+            .find_map(|s| if let Section::Oracle(o) = s { Some(o) } else { None })
             .map(|v| v.iter().collect())
             .unwrap_or_default()
     }

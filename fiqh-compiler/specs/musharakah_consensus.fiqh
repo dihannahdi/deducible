@@ -1,0 +1,73 @@
+// Musharakah Mutanaqisah with a ZERO-TRUST consensus valuation oracle (Vision #2).
+// The single trusted valuer is replaced by an independent committee; the fair value is the
+// median of attestations within an agreed dispersion band. If the committee disagrees beyond
+// `gharar_bound_bps`, the value is *majhul* (gharar) and the contract cannot transact on it.
+// Citations [scholar-verify]; consistency is not a fatwa.
+
+instrument MusharakahConsensus : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 (Musharakah)";   // [scholar-verify]
+    riba_ref: "al-Baqarah 2:275";                            // [scholar-verify]
+    gharar_ref: "Sahih Muslim, Kitab al-Buyu'";              // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;     // now a consensus committee (see the oracle section)
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  // Zero-trust valuation: no single party's word is trusted; the gharar boundary is the
+  // declared dispersion bound, enforced on-chain.
+  oracle {
+    mode: consensus;
+    committee: 5;
+    quorum: 3;
+    gharar_bound_bps: 500;   // 5% — beyond this dispersion the value is majhul
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

@@ -92,6 +92,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
     }
 
     check_role_separation(spec, &mut d);
+    check_oracle_cfg(spec, &mut d);
 
     match Class::from_str(&spec.class) {
         Class::MusharakahMutanaqisah => check_musharakah(spec, &mut d),
@@ -218,6 +219,61 @@ fn check_capital_sum(spec: &Spec, d: &mut Vec<Diagnostic>, require_multi: bool) 
             "a partnership requires at least two capital contributors",
             "",
         ));
+    }
+}
+
+fn oracle_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {
+    spec.oracle_cfg().into_iter().find(|k| k.key == key).map(|k| &k.val)
+}
+
+/// Validate an optional `oracle { ... }` configuration. Absent => single-valuer (mock) mode.
+/// `mode: consensus` declares a zero-trust committee oracle; the gharar boundary becomes the
+/// declared dispersion bound, enforced on-chain.
+fn check_oracle_cfg(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if spec.oracle_cfg().is_empty() {
+        return;
+    }
+    let mode = oracle_get(spec, "mode").and_then(|e| e.as_ident()).unwrap_or("");
+    if mode != "consensus" {
+        d.push(Diagnostic::error(
+            "ORACLE-1",
+            spec.span,
+            format!("unknown oracle mode '{}'; only 'consensus' is supported", mode),
+            C_GHARAR,
+        ));
+        return;
+    }
+    let committee = oracle_get(spec, "committee").and_then(|e| e.as_num());
+    let quorum = oracle_get(spec, "quorum").and_then(|e| e.as_num());
+    let bound = oracle_get(spec, "gharar_bound_bps").and_then(|e| e.as_num());
+    match (committee, quorum, bound) {
+        (Some(c), Some(q), Some(b)) => {
+            if q < 1 {
+                d.push(Diagnostic::error("ORACLE-2", spec.span, "quorum must be >= 1", C_GHARAR));
+            }
+            if c < q {
+                d.push(Diagnostic::error(
+                    "ORACLE-3",
+                    spec.span,
+                    format!("committee ({}) must be >= quorum ({})", c, q),
+                    C_GHARAR,
+                ));
+            }
+            if b == 0 || b >= 10_000 {
+                d.push(Diagnostic::error(
+                    "ORACLE-4",
+                    spec.span,
+                    "gharar_bound_bps must be in (0, 10000) — the dispersion above which a value is majhul",
+                    C_GHARAR,
+                ));
+            }
+        }
+        _ => d.push(Diagnostic::error(
+            "ORACLE-5",
+            spec.span,
+            "a consensus oracle requires committee, quorum, and gharar_bound_bps",
+            C_GHARAR,
+        )),
     }
 }
 

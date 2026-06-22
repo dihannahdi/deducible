@@ -436,6 +436,20 @@ describe("{name} (fiqhc-generated) — differential equivalence", function () {{
     )
 }
 
+/// Consensus oracle parameters (committee, quorum, gharar_bound_bps) if the spec declares
+/// `oracle { mode: consensus; ... }`; otherwise None (single-valuer / mock mode).
+fn consensus_cfg(spec: &Spec) -> Option<(u64, u64, u64)> {
+    let oc = spec.oracle_cfg();
+    if oc.is_empty() {
+        return None;
+    }
+    if oc.iter().find(|k| k.key == "mode").and_then(|k| k.val.as_ident()) != Some("consensus") {
+        return None;
+    }
+    let g = |key: &str| oc.iter().find(|k| k.key == key).and_then(|k| k.val.as_num());
+    Some((g("committee")?, g("quorum")?, g("gharar_bound_bps")?))
+}
+
 fn musharakah_descriptor(spec: &Spec, name: &str, bank_bps: u64, rate: u64, window: u64) -> String {
     // Lean tinybar asset value to fit a constrained testnet budget.
     let v0: u64 = 1_000_000;
@@ -444,13 +458,26 @@ fn musharakah_descriptor(spec: &Spec, name: &str, bank_bps: u64, rate: u64, wind
     let buy_bps: u64 = 2000;
     let buy_price = v0 * buy_bps / 10_000;
     let rent_due = rate * bank_bps;
-    let _ = spec;
+    let (oracle_block, mode) = match consensus_cfg(spec) {
+        Some((c, q, b)) => (
+            format!(
+                "{{ \"contract\": \"ConsensusValuationOracle\", \"mode\": \"consensus\", \"committee\": {}, \"quorum\": {}, \"ghararBoundBps\": {}, \"targetValue\": {} }}",
+                c, q, b, v0
+            ),
+            "consensus",
+        ),
+        None => (
+            format!("{{ \"contract\": \"MockValuationOracle\", \"initialValue\": {} }}", v0),
+            "single",
+        ),
+    };
     format!(
         r#"{{
   "instrument": "musharakah_mutanaqisah",
   "contract": "{name}",
   "operatorRole": "bank",
-  "oracle": {{ "contract": "MockValuationOracle", "initialValue": {v0} }},
+  "oracleMode": "{mode}",
+  "oracle": {oracle_block},
   "constructorAbi": ["address","address","address","address","uint256","uint256","uint256"],
   "constructorArgs": ["@client","@oracle","@arbiter","@maslahah",{bank_bps},{rate},{window}],
   "accounts": ["client","arbiter","maslahah"],
@@ -468,7 +495,8 @@ fn musharakah_descriptor(spec: &Spec, name: &str, bank_bps: u64, rate: u64, wind
         bank_after = bank_bps - buy_bps,
         client_after = 10_000 - bank_bps + buy_bps,
         name = name,
-        v0 = v0,
+        mode = mode,
+        oracle_block = oracle_block,
         bank_bps = bank_bps,
         rate = rate,
         window = window,
