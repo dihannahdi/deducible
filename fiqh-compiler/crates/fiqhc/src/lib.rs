@@ -11,6 +11,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod fuzz;
 pub mod lexer;
 pub mod lsp;
 pub mod nl;

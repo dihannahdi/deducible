@@ -627,7 +627,7 @@ const MUDARABAH_BODY: &str = r#"    address public immutable rabbAlMal;
 
     /// @dev INVARIANT capital_from_rabb_al_mal_only: only the rabb al-mal funds; the capital is
     ///      placed with the mudarib to trade (the mudarib contributes labor, not capital).
-    function fund() external payable onlyRabb {
+    function fund() external payable onlyRabb nonReentrant {
         require(!active && capital == 0, "funded/active");
         uint256 c = oracle.fairValue();
         require(msg.value == c, "rabb funds the full capital");
@@ -845,7 +845,7 @@ const IJARAH_BODY: &str = r#"    address public immutable lessor;
     }
 
     /// @dev the lessor (owner) bears major maintenance.
-    function lessorMaintenance() external payable onlyLessor {
+    function lessorMaintenance() external payable onlyLessor nonReentrant {
         require(active, "not active");
         emit MaintenancePaid(msg.value);
         if (msg.value > 0) { (bool ok, ) = lessee.call{value: msg.value}(""); require(ok, "maint xfer"); }
@@ -873,7 +873,7 @@ const IJARAH_BODY: &str = r#"    address public immutable lessor;
 
     /// @dev INVARIANT no_late_penalty_interest: any late charge goes to charity (sadaqah),
     ///      never to the lessor as interest on a debt.
-    function payLateCharge() external payable onlyLessee {
+    function payLateCharge() external payable onlyLessee nonReentrant {
         require(active, "not active");
         require(msg.value > 0, "no charge");
         (bool ok, ) = charity.call{value: msg.value}(""); require(ok, "charity xfer");
@@ -1007,6 +1007,8 @@ const COMMERCIAL_BODY: &str = r#"    address public immutable depositor;
     bool public disputed;
     bool public closed;
 
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
     modifier onlyDepositor() { require(msg.sender == depositor, "only depositor"); _; }
     modifier onlyArbiter() { require(msg.sender == arbiter, "only arbiter"); _; }
     modifier open() { require(!closed, "closed"); _; }
@@ -1037,7 +1039,7 @@ const COMMERCIAL_BODY: &str = r#"    address public immutable depositor;
         conditionMet = true; emit ConditionConfirmed(msg.sender);
     }
 
-    function release() external open {
+    function release() external open nonReentrant {
         require(msg.sender == depositor || msg.sender == beneficiary, "only a party");
         require(conditionMet, "condition not met");
         require(!disputed, "under dispute");
@@ -1054,7 +1056,7 @@ const COMMERCIAL_BODY: &str = r#"    address public immutable depositor;
 
     /// @dev INVARIANT dispute_resolution_present: the arbiter's ruling is the remedy
     ///      (release to the beneficiary, or refund to the depositor). Regime-neutral.
-    function arbiterRuling(bool forBeneficiary) external onlyArbiter open {
+    function arbiterRuling(bool forBeneficiary) external onlyArbiter open nonReentrant {
         require(disputed, "no dispute");
         closed = true;
         address to = forBeneficiary ? beneficiary : depositor;

@@ -12,7 +12,8 @@ fn usage() -> ! {
          \x20 fiqhc check <file.fiqh>          run the fiqh invariant engine (no codegen)\n\
          \x20 fiqhc build <file.fiqh> [opts]   check, then emit Solidity + test + deploy descriptor\n\
          \x20 fiqhc nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
-         \x20 fiqhc lsp                        run the Language Server (stdio JSON-RPC, for editors)\n"
+         \x20 fiqhc lsp                        run the Language Server (stdio JSON-RPC, for editors)\n\
+         \x20 fiqhc fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n"
     );
     exit(2);
 }
@@ -181,6 +182,21 @@ fn main() {
             );
         }
         "lsp" => fiqhc::lsp::run(),
+        "fuzz" => {
+            let n = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(100_000);
+            let seeds = [
+                include_str!("../../../specs/musharakah_mutanaqisah.fiqh"),
+                include_str!("../../../specs/commercial_escrow.fiqh"),
+                include_str!("../../../specs/riba_disguised.fiqh"),
+            ];
+            match fiqhc::fuzz::run(n, &seeds) {
+                None => println!("fuzz: {} iterations — no panic, no crash. The engine holds.", n),
+                Some(input) => {
+                    eprintln!("fuzz: PANIC on input ({} bytes):\n{}", input.len(), input);
+                    exit(1);
+                }
+            }
+        }
         "nl" => {
             let path = args.get(2).unwrap_or_else(|| usage());
             let src = read(path);
