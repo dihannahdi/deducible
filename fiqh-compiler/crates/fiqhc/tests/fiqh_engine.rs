@@ -52,3 +52,18 @@ fn every_refusal_carries_a_citation() {
         }
     }
 }
+
+#[test]
+fn diagnostics_point_at_the_offending_token() {
+    // Open Core pillar #1: precise spans. RIBA-1 must point at the capital_guarantee line,
+    // not the instrument header — so the editor underlines the right place.
+    let (_, diags) = compile_check(RIBA).expect("parses");
+    let riba1 = diags.iter().find(|d| d.code == "RIBA-1" && d.is_error()).expect("RIBA-1");
+    let line = RIBA.lines().nth(riba1.span.line.saturating_sub(1)).unwrap_or("");
+    assert!(
+        line.contains("capital_guarantee"),
+        "RIBA-1 should point at the capital_guarantee line; got line {}: {:?}",
+        riba1.span.line,
+        line
+    );
+}

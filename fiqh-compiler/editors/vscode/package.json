@@ -1,0 +1,43 @@
+{
+  "name": "fiqh-language",
+  "displayName": "fiqh — compliance-by-construction",
+  "description": "Language support for .fiqh: live fiqh-cited diagnostics (RIBA-1, GHARAR-1, …) via the fiqhc Language Server.",
+  "version": "0.1.0",
+  "publisher": "syariahchain",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages", "Linters"],
+  "activationEvents": ["onLanguage:fiqh"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "fiqh",
+        "aliases": ["fiqh", "Fiqh"],
+        "extensions": [".fiqh"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      { "language": "fiqh", "scopeName": "source.fiqh", "path": "./syntaxes/fiqh.tmLanguage.json" }
+    ],
+    "configuration": {
+      "title": "fiqh",
+      "properties": {
+        "fiqh.serverPath": {
+          "type": "string",
+          "default": "fiqhc",
+          "description": "Path to the fiqhc binary (it is launched as `fiqhc lsp`)."
+        },
+        "fiqh.rules": {
+          "type": "string",
+          "default": "",
+          "description": "Optional rule-base module name (e.g. aaoifi, dsn-mui). Empty = builtin engine."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

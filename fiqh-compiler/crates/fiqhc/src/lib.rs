@@ -12,6 +12,7 @@
 pub mod ast;
 pub mod codegen;
 pub mod lexer;
+pub mod lsp;
 pub mod nl;
 pub mod parser;
 pub mod sema;

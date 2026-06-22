@@ -11,7 +11,8 @@ fn usage() -> ! {
          \x20 fiqhc parse <file.fiqh>          parse and dump the AST\n\
          \x20 fiqhc check <file.fiqh>          run the fiqh invariant engine (no codegen)\n\
          \x20 fiqhc build <file.fiqh> [opts]   check, then emit Solidity + test + deploy descriptor\n\
-         \x20 fiqhc nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n"
+         \x20 fiqhc nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
+         \x20 fiqhc lsp                        run the Language Server (stdio JSON-RPC, for editors)\n"
     );
     exit(2);
 }
@@ -179,6 +180,7 @@ fn main() {
                 spec.name, g.instrument, emitted.join("\n    ")
             );
         }
+        "lsp" => fiqhc::lsp::run(),
         "nl" => {
             let path = args.get(2).unwrap_or_else(|| usage());
             let src = read(path);

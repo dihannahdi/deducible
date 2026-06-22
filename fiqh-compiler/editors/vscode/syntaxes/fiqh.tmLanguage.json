@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "fiqh",
+  "scopeName": "source.fiqh",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#sections" },
+    { "include": "#strings" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.fiqh", "match": "//.*$" },
+        { "name": "comment.block.fiqh", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.fiqh", "match": "\\b(instrument|invariant|require|import|rules)\\b" }
+      ]
+    },
+    "sections": {
+      "patterns": [
+        { "name": "entity.name.section.fiqh", "match": "\\b(meta|parties|capital|returns|risk|oracle|dispute|rescission|lifecycle)\\b" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.fiqh",
+      "begin": "\"",
+      "end": "\""
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.fiqh", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    }
+  }
+}

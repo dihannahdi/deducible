@@ -162,6 +162,16 @@ fn risk_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {
     spec.risk().into_iter().find(|k| k.key == key).map(|k| &k.val)
 }
 
+/// Span-aware lookup, so a diagnostic can point at the OFFENDING token (precise line/col)
+/// rather than the instrument header — the foundation of the LSP's red squiggle.
+fn risk_kv<'a>(spec: &'a Spec, key: &str) -> Option<&'a Kv> {
+    spec.risk().into_iter().find(|k| k.key == key)
+}
+
+fn ret_kv<'a>(rb: &'a RetBlock, key: &str) -> Option<&'a Kv> {
+    rb.kvs.iter().find(|k| k.key == key)
+}
+
 fn role_party<'a>(spec: &'a Spec, role: &str) -> Option<&'a Party> {
     spec.parties().into_iter().find(|p| p.role == role)
 }
@@ -341,15 +351,15 @@ fn check_role_separation(spec: &Spec, d: &mut Vec<Diagnostic>) {
 // --- Musharakah Mutanaqisah ---
 
 fn check_musharakah(spec: &Spec, d: &mut Vec<Diagnostic>) {
-    // RIBA-1: no guaranteed capital.
-    match risk_get(spec, "capital_guarantee") {
-        Some(e) if e.as_ident() == Some("none") => {}
-        Some(e) => d.push(Diagnostic::error(
+    // RIBA-1: no guaranteed capital. (precise span: the offending kv)
+    match risk_kv(spec, "capital_guarantee") {
+        Some(kv) if kv.val.as_ident() == Some("none") => {}
+        Some(kv) => d.push(Diagnostic::error(
             "RIBA-1",
-            spec.span,
+            kv.span,
             format!(
                 "capital is guaranteed to '{}'; a guaranteed return of capital turns a partnership into an interest-bearing loan (riba)",
-                e.render()
+                kv.val.render()
             ),
             C_RIBA,
         )),
@@ -361,15 +371,15 @@ fn check_musharakah(spec: &Spec, d: &mut Vec<Diagnostic>) {
         )),
     }
 
-    // RISK-1: loss is shared proportional to ownership.
-    match risk_get(spec, "loss") {
-        Some(e) if e.as_ident() == Some("proportional_to_ownership") => {}
-        Some(e) => d.push(Diagnostic::error(
+    // RISK-1: loss is shared proportional to ownership. (precise span)
+    match risk_kv(spec, "loss") {
+        Some(kv) if kv.val.as_ident() == Some("proportional_to_ownership") => {}
+        Some(kv) => d.push(Diagnostic::error(
             "RISK-1",
-            spec.span,
+            kv.span,
             format!(
                 "loss allocation is '{}'; a diminishing partnership must share loss proportional_to_ownership (no risk-sharing = no partnership)",
-                e.render()
+                kv.val.render()
             ),
             C_RISK,
         )),
@@ -389,22 +399,22 @@ fn check_musharakah(spec: &Spec, d: &mut Vec<Diagnostic>) {
             "musharakah mutanaqisah requires a rent (ijarah) return on the financier's living share",
             C_RIBA,
         )),
-        Some(rent) => match kv_get(&rent.kvs, "basis") {
+        Some(rent) => match ret_kv(rent, "basis") {
             None => d.push(Diagnostic::error("RENT-1", rent.span, "rent block has no 'basis'", "")),
-            Some(b) if basis_is_principal(b) => d.push(Diagnostic::error(
+            Some(kv) if basis_is_principal(&kv.val) => d.push(Diagnostic::error(
                 "RIBA-2",
-                rent.span,
+                kv.span,
                 "rent is charged on principal/capital — that is interest on a loan, not rent on a living share",
                 C_RIBA,
             )),
-            Some(b) => {
+            Some(kv) => {
                 let fin = role_party(spec, "financier").map(|p| p.name.clone());
-                let ok = matches!(b.as_path(), Some(p) if p.len() == 2 && Some(p[0].clone()) == fin && p[1] == "share");
+                let ok = matches!(kv.val.as_path(), Some(p) if p.len() == 2 && Some(p[0].clone()) == fin && p[1] == "share");
                 if !ok {
                     d.push(Diagnostic::warn(
                         "RIBA-2",
-                        rent.span,
-                        format!("rent basis '{}' is not <financier>.share; rent should fall on the financier's living share", b.render()),
+                        kv.span,
+                        format!("rent basis '{}' is not <financier>.share; rent should fall on the financier's living share", kv.val.render()),
                         C_RIBA,
                     ));
                 }
@@ -420,19 +430,19 @@ fn check_musharakah(spec: &Spec, d: &mut Vec<Diagnostic>) {
             "musharakah mutanaqisah requires a buyout mechanism (the diminishing leg)",
             "",
         )),
-        Some(b) => match kv_get(&b.kvs, "price") {
+        Some(b) => match ret_kv(b, "price") {
             None => d.push(Diagnostic::error("BUYOUT-1", b.span, "buyout has no 'price'", "")),
-            Some(price) => {
+            Some(kv) => {
                 let oracle = role_party(spec, "oracle").map(|p| p.name.clone());
-                let attested = expr_mentions(price, "oracle")
-                    || oracle.as_deref().map(|n| expr_mentions(price, n)).unwrap_or(false);
+                let attested = expr_mentions(&kv.val, "oracle")
+                    || oracle.as_deref().map(|n| expr_mentions(&kv.val, n)).unwrap_or(false);
                 if !attested {
                     d.push(Diagnostic::error(
                         "GHARAR-1",
-                        b.span,
+                        kv.span,
                         format!(
                             "buyout price '{}' is not derived from the independent oracle; a self-named or fixed price re-introduces gharar and can disguise a guaranteed return",
-                            price.render()
+                            kv.val.render()
                         ),
                         C_GHARAR,
                     ));
