@@ -1,0 +1,11 @@
+{
+  "network": "testnet",
+  "token": "0.0.9304628",
+  "custodianContract": "0.0.9304674",
+  "client": "0.0.9304668",
+  "custodianUnitsAfterFunding": "1000",
+  "clientUnitsAfterContractTransfer": "1000",
+  "custodianUnitsAfterTransfer": "0",
+  "contractMovedRealAssetToken": true,
+  "hashscan": "https://hashscan.io/testnet/contract/0.0.9304674"
+}

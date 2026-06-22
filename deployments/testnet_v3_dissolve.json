@@ -1,0 +1,21 @@
+{
+  "network": "testnet",
+  "token": "0.0.9304877",
+  "oracle": "0.0.9304881",
+  "musharakahV3": "0.0.9304884",
+  "client": "0.0.9304878",
+  "lossBorneViaProceeds": {
+    "priceAtFullValueTinybar": 20000000,
+    "priceAfterLossTinybar": 18000000,
+    "bankReceivedLessTinybar": 2000000
+  },
+  "clientUnitsBought": "2000",
+  "dissolve": {
+    "bankUnitsBefore": "2000",
+    "bankUnitsAfter": "8000",
+    "escrowAfter": "0",
+    "returnedToBank": 6000
+  },
+  "cleanWindUp": true,
+  "hashscan": "https://hashscan.io/testnet/contract/0.0.9304884"
+}

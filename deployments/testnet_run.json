@@ -1,0 +1,90 @@
+{
+  "network": "testnet",
+  "account": "0.0.9301070",
+  "contracts": {
+    "oracle": "0.0.9303337",
+    "musharakah": "0.0.9303339"
+  },
+  "hashscan": {
+    "oracle": "https://hashscan.io/testnet/contract/0.0.9303337",
+    "musharakah": "https://hashscan.io/testnet/contract/0.0.9303339"
+  },
+  "states": {
+    "s0": {
+      "bankShareBps": "8000",
+      "clientShareBps": "2000",
+      "assetValue": "100000000",
+      "rentDue": "80000",
+      "oracleFairValue": "100000000"
+    },
+    "s1_afterPayRent": {
+      "bankShareBps": "8000",
+      "clientShareBps": "2000",
+      "assetValue": "100000000",
+      "rentDue": "80000",
+      "oracleFairValue": "100000000"
+    },
+    "s2_afterBuyShare": {
+      "bankShareBps": "6000",
+      "clientShareBps": "4000",
+      "assetValue": "100000000",
+      "rentDue": "60000",
+      "oracleFairValue": "100000000"
+    },
+    "s3_afterLoss": {
+      "bankShareBps": "6000",
+      "clientShareBps": "4000",
+      "assetValue": "90000000",
+      "rentDue": "60000",
+      "oracleFairValue": "90000000"
+    }
+  },
+  "gasAndFees": [
+    {
+      "op": "deploy oracle",
+      "status": "SUCCESS",
+      "gasUsed": "296302",
+      "feeHbar": "12.95208009 ℏ"
+    },
+    {
+      "op": "deploy musharakah",
+      "status": "SUCCESS",
+      "gasUsed": "1254276",
+      "feeHbar": "13.97711227 ℏ"
+    },
+    {
+      "op": "payRent (bank 80%)",
+      "status": "SUCCESS",
+      "gasUsed": "34546",
+      "feeTinybar": "3696422",
+      "feeHbar": "0.03696422 ℏ",
+      "txId": "0.0.9301070@1782108652.468548478"
+    },
+    {
+      "op": "buyShare 2000bps",
+      "status": "SUCCESS",
+      "gasUsed": "49599",
+      "feeTinybar": "5307093",
+      "feeHbar": "0.05307093 ℏ",
+      "txId": "0.0.9301070@1782108653.792195453"
+    },
+    {
+      "op": "oracle.attest down",
+      "status": "SUCCESS",
+      "gasUsed": "27908",
+      "feeTinybar": "2986156",
+      "feeHbar": "0.02986156 ℏ",
+      "txId": "0.0.9301070@1782108661.147149487"
+    },
+    {
+      "op": "syncValuation loss",
+      "status": "SUCCESS",
+      "gasUsed": "62800",
+      "feeTinybar": "6719600",
+      "feeHbar": "0.067196 ℏ",
+      "txId": "0.0.9301070@1782108662.519702267"
+    }
+  ],
+  "balanceStart": "872.24045987 ℏ",
+  "balanceEnd": "790.29417877 ℏ"
+}

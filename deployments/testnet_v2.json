@@ -1,0 +1,38 @@
+{
+  "network": "testnet",
+  "accounts": {
+    "bank": "0.0.9301070",
+    "client": "0.0.9304235",
+    "valuer": "0.0.9304236"
+  },
+  "contracts": {
+    "oracle": "0.0.9304238",
+    "musharakahV2": "0.0.9304241"
+  },
+  "hashscan": "https://hashscan.io/testnet/contract/0.0.9304241",
+  "adversarial": [
+    {
+      "check": "client tries to attest value (I4)",
+      "result": "reverted as expected",
+      "detail": "receipt for transaction 0.0.9304235@1782117646.416001732 contained error status CONTRACT_R"
+    },
+    {
+      "check": "valuer (non-partner) tries to settle",
+      "result": "reverted as expected",
+      "detail": "receipt for transaction 0.0.9304236@1782117647.262488228 contained error status CONTRACT_R"
+    },
+    {
+      "check": "bank tries fundClient (wrong role)",
+      "result": "reverted as expected",
+      "detail": "receipt for transaction 0.0.9301070@1782117652.984021444 contained error status CONTRACT_R"
+    }
+  ],
+  "settlement": {
+    "bankFundedTinybar": "80000000",
+    "attestedFairValueTinybar": "90000000",
+    "bankPayoutTinybar": "72000000",
+    "expectedBankPayoutTinybar": "72000000",
+    "bankBoreLossTinybar": "8000000",
+    "cannotExitWhole": true
+  }
+}

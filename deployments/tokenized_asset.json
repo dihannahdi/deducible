@@ -1,0 +1,20 @@
+{
+  "network": "testnet",
+  "token": {
+    "id": "0.0.9304628",
+    "name": "Musharakah Asset Share",
+    "symbol": "MMS",
+    "decimals": 0,
+    "supply": 10000
+  },
+  "treasury_bank": "0.0.9301070",
+  "client": "0.0.9304625",
+  "holdings": {
+    "bankUnits": "8000",
+    "clientUnits": "2000",
+    "bankPct": 80,
+    "clientPct": 20
+  },
+  "hashscan": "https://hashscan.io/testnet/token/0.0.9304628",
+  "note": "Real transferable HTS token = fractional asset ownership. Legal title remains an off-chain registry bridge (paper limitation)."
+}

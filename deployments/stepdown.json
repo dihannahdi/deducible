@@ -1,0 +1,41 @@
+{
+  "network": "testnet",
+  "contracts": {
+    "oracle": "0.0.9303640",
+    "musharakah": "0.0.9303643"
+  },
+  "hashscan": "https://hashscan.io/testnet/contract/0.0.9303643",
+  "curve": [
+    {
+      "step": 0,
+      "bankShareBps": 8000,
+      "clientShareBps": 2000,
+      "rentDue": 80000
+    },
+    {
+      "step": 1,
+      "bankShareBps": 6000,
+      "clientShareBps": 4000,
+      "rentDue": 60000
+    },
+    {
+      "step": 2,
+      "bankShareBps": 4000,
+      "clientShareBps": 6000,
+      "rentDue": 40000
+    },
+    {
+      "step": 3,
+      "bankShareBps": 2000,
+      "clientShareBps": 8000,
+      "rentDue": 20000
+    },
+    {
+      "step": 4,
+      "bankShareBps": 0,
+      "clientShareBps": 10000,
+      "rentDue": 0
+    }
+  ],
+  "fullyAcquired": true
+}

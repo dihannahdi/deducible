@@ -1,0 +1,24 @@
+{
+  "network": "testnet",
+  "deployedBy": "0.0.9301070",
+  "oracle": {
+    "contractId": "0.0.9303214",
+    "evm": "0x00000000000000000000000000000000008df4ae"
+  },
+  "musharakah": {
+    "contractId": "0.0.9303217",
+    "evm": "0x00000000000000000000000000000000008df4b1"
+  },
+  "state": {
+    "bankShareBps": "8000",
+    "clientShareBps": "2000",
+    "assetValue": "1000000",
+    "initialAssetValue": "1000000",
+    "rentDue": "8000",
+    "oracleFairValue": "1000000"
+  },
+  "hashscan": {
+    "oracle": "https://hashscan.io/testnet/contract/0.0.9303214",
+    "musharakah": "https://hashscan.io/testnet/contract/0.0.9303217"
+  }
+}

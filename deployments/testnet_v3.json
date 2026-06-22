@@ -1,0 +1,17 @@
+{
+  "network": "testnet",
+  "token": "0.0.9304701",
+  "oracle": "0.0.9304705",
+  "musharakahV3": "0.0.9304707",
+  "client": "0.0.9304702",
+  "before": {
+    "clientUnits": "0",
+    "escrowUnits": "8000"
+  },
+  "after": {
+    "clientUnits": "2000",
+    "escrowUnits": "6000"
+  },
+  "atomicBuyout_unitsMoved": true,
+  "hashscan": "https://hashscan.io/testnet/contract/0.0.9304707"
+}
