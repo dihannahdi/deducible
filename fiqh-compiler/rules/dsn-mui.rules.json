@@ -1,0 +1,36 @@
+{
+  "authority": "DSN-MUI",
+  "version": "2000-2007",
+  "note": "Indonesian authority module. Same engine, different rule-base — demonstrating pluggable jurisprudence. Fatwa numbers and the extra `nisbah_explicit` requirement are ILLUSTRATIVE of jurisdictional divergence and must be ratified by DSN-MUI; flagged [scholar-verify].",
+  "regimes": {
+    "islamic": {
+      "classes": {
+        "musharakah_mutanaqisah": {
+          "required_invariants": ["ownership_conserved", "rent_on_living_share", "loss_follows_capital", "price_attested", "nisbah_explicit"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "DSN-MUI Fatwa No. 08/DSN-MUI/IV/2000 (Musyarakah) [scholar-verify]" },
+            { "code": "RISK-1", "field": "risk.loss", "op": "eq", "value": "proportional_to_ownership", "citation": "DSN-MUI No. 08/DSN-MUI/IV/2000 — kerugian menurut porsi modal [scholar-verify]" },
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "ne", "value": "principal", "citation": "al-Baqarah 2:275 [scholar-verify]" },
+            { "code": "GHARAR-1", "field": "returns.buyout.priceSource", "op": "eq", "value": "oracle", "citation": "larangan gharar [scholar-verify]" }
+          ]
+        },
+        "mudarabah": {
+          "required_invariants": ["capital_from_rabb_al_mal_only", "profit_by_ratio", "loss_on_rabb_al_mal", "no_guaranteed_profit"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "DSN-MUI Fatwa No. 07/DSN-MUI/IV/2000 (Mudharabah) [scholar-verify]" },
+            { "code": "RISK-2", "field": "risk.loss", "op": "eq", "value": "on_rabb_al_mal", "citation": "DSN-MUI No. 07/DSN-MUI/IV/2000 [scholar-verify]" },
+            { "code": "PROFIT-1", "field": "returns.profit.split", "op": "eq", "value": "ratio", "citation": "DSN-MUI No. 07 — nisbah, bukan nominal pasti [scholar-verify]" }
+          ]
+        },
+        "ijarah_imbt": {
+          "required_invariants": ["rent_for_usufruct", "lessor_bears_ownership_risk", "transfer_separate_from_lease", "no_late_penalty_interest"],
+          "constraints": [
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "eq", "value": "usufruct", "citation": "DSN-MUI Fatwa No. 27/DSN-MUI/III/2002 (IMBT) [scholar-verify]" },
+            { "code": "RISK-3", "field": "risk.loss", "op": "eq", "value": "on_lessor", "citation": "DSN-MUI No. 27/DSN-MUI/III/2002 [scholar-verify]" },
+            { "code": "RIBA-3", "field": "returns.rent.late_penalty", "op": "eq", "value": "none", "citation": "denda keterlambatan untuk sosial, bukan pemberi sewa [scholar-verify]" }
+          ]
+        }
+      }
+    }
+  }
+}

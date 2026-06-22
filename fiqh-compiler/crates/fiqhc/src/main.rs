@@ -61,28 +61,61 @@ fn main() {
             }
         }
         "check" => {
-            let path = args.get(2).unwrap_or_else(|| usage());
-            let src = read(path);
-            match fiqhc::compile_check(&src) {
-                Ok((spec, diags)) => {
-                    let errors = report(path, &diags);
-                    if errors > 0 {
-                        eprintln!(
-                            "\nrefused: '{}' is INCONSISTENT with its declared fiqh rule-base ({} error(s)). No contract emitted.",
-                            spec.name, errors
-                        );
-                        exit(1);
-                    } else {
-                        println!(
-                            "consistent: '{}' ({}) is consistent with its declared rule-base. (Consistency is not a fatwa — a qualified scholar must ratify the rule-base. Allahu a'lam.)",
-                            spec.name, spec.class
-                        );
+            let mut spec_path: Option<String> = None;
+            let mut rules: Option<String> = None;
+            let mut it = args.iter().skip(2);
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--rules" => rules = it.next().cloned(),
+                    _ => {
+                        if spec_path.is_none() {
+                            spec_path = Some(a.clone());
+                        }
                     }
                 }
+            }
+            let path = spec_path.unwrap_or_else(|| usage());
+            let src = read(&path);
+            let spec = match fiqhc::compile_parse(&src) {
+                Ok(s) => s,
                 Err((msg, span)) => {
                     eprintln!("{}:{}:{}: parse error: {}", path, span.line, span.col, msg);
                     exit(1);
                 }
+            };
+            // Effective rule-base: --rules flag, else `meta { rules: "..."; }`, else the builtin engine.
+            let eff = rules.or_else(|| {
+                spec.meta()
+                    .into_iter()
+                    .find(|k| k.key == "rules")
+                    .and_then(|k| k.val.as_str().map(|s| s.to_string()).or_else(|| k.val.as_ident().map(|s| s.to_string())))
+            });
+            let (diags, authority) = match eff {
+                Some(name) => match load_ruleset(&name) {
+                    Ok(rs) => {
+                        let label = rs.label();
+                        (fiqhc::sema::check_with_ruleset(&spec, &rs), Some(label))
+                    }
+                    Err(e) => {
+                        eprintln!("fiqhc: {}", e);
+                        exit(2);
+                    }
+                },
+                None => (fiqhc::sema::check(&spec), None),
+            };
+            let errors = report(&path, &diags);
+            let base = authority.as_deref().unwrap_or("builtin engine");
+            if errors > 0 {
+                eprintln!(
+                    "\nrefused: '{}' is INCONSISTENT with the {} rule-base ({} error(s)). No contract emitted.",
+                    spec.name, base, errors
+                );
+                exit(1);
+            } else {
+                println!(
+                    "consistent: '{}' ({}) is consistent with the {} rule-base. (Consistency is not a fatwa — the authority must ratify the rule module. Allahu a'lam.)",
+                    spec.name, spec.class, base
+                );
             }
         }
         "build" => {
@@ -179,6 +212,15 @@ fn main() {
         }
         _ => usage(),
     }
+}
+
+/// Load a pluggable rule-base module by name from the rules directory
+/// (`$FIQHC_RULES_DIR` or `./rules`), e.g. "aaoifi" -> rules/aaoifi.rules.json.
+fn load_ruleset(name: &str) -> Result<fiqhc::sema::RuleSet, String> {
+    let dir = std::env::var("FIQHC_RULES_DIR").unwrap_or_else(|_| "rules".to_string());
+    let path = format!("{}/{}.rules.json", dir, name);
+    let s = std::fs::read_to_string(&path).map_err(|e| format!("cannot read rule module '{}': {}", path, e))?;
+    fiqhc::sema::RuleSet::from_json(&s)
 }
 
 fn write_out(root: &str, rel: &str, content: &str) -> String {

@@ -1,0 +1,55 @@
+// Musharakah Mutanaqisah declared against the Indonesian DSN-MUI rule-base. It adds the
+// `nisbah_explicit` invariant that the DSN-MUI module requires (and AAOIFI does not) — the same
+// instrument, ratified under a different jurisdiction. This is pluggable jurisprudence:
+// `meta { rules: "dsn-mui"; }` selects the authority; the engine is unchanged.
+
+instrument MusharakahDSN : musharakah_mutanaqisah {
+  meta {
+    rules: "dsn-mui";
+    basis: "DSN-MUI Fatwa No. 08/DSN-MUI/IV/2000 (Musyarakah)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant nisbah_explicit      { rent.rate != 0 }   // DSN-MUI: the return ratio must be explicit
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

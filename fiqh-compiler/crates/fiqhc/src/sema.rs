@@ -10,6 +10,7 @@
 //! lowered to Solidity. Compliance becomes a property of the language.
 
 use crate::ast::*;
+use serde_json::Value;
 
 // --- citations (all flagged for human takhrij) ---
 const C_RIBA: &str = "Qur'an al-Baqarah 2:275; AAOIFI Shari'ah Standard No. 12 [scholar-verify]";
@@ -718,4 +719,145 @@ fn check_commercial(spec: &Spec, d: &mut Vec<Diagnostic>) {
         &["certainty_of_terms", "no_penalty_clause", "consideration_present", "dispute_resolution_present"],
         d,
     );
+}
+
+// =====================================================================================
+// Pluggable jurisprudence (Open Core pillar #2): the computation engine is separated from
+// the rule-base. An authority (AAOIFI, DSN-MUI, a Common-Law panel) publishes a rule MODULE —
+// pure data — and the same engine checks any spec against it. Ratification becomes a module,
+// not a fork; the engine is regime-neutral and jurisdiction-agnostic.
+// =====================================================================================
+
+/// A rule-base published by some authority, loaded from a `*.rules.json` module.
+pub struct RuleSet {
+    pub authority: String,
+    pub version: String,
+    json: Value,
+}
+
+impl RuleSet {
+    pub fn from_json(s: &str) -> Result<RuleSet, String> {
+        let json: Value = serde_json::from_str(s).map_err(|e| format!("invalid rule module: {}", e))?;
+        Ok(RuleSet {
+            authority: json["authority"].as_str().unwrap_or("?").to_string(),
+            version: json["version"].as_str().unwrap_or("?").to_string(),
+            json,
+        })
+    }
+    pub fn label(&self) -> String {
+        format!("{} {}", self.authority, self.version)
+    }
+}
+
+/// Resolve a dotted field path to the value the spec actually declares (as a string), so a
+/// data-driven constraint `{field, op, value}` can be evaluated against it.
+fn resolve_field(spec: &Spec, field: &str) -> Option<String> {
+    let p: Vec<&str> = field.split('.').collect();
+    match p.as_slice() {
+        ["risk", k] => risk_get(spec, k).map(expr_to_string),
+        ["dispute", k] => dispute_get(spec, k).map(expr_to_string),
+        ["returns", "buyout", "priceSource"] => {
+            let b = find_return(spec, "buyout")?;
+            let price = kv_get(&b.kvs, "price")?;
+            let oracle = role_party(spec, "oracle").map(|x| x.name.clone());
+            let attested = expr_mentions(price, "oracle")
+                || oracle.as_deref().map(|n| expr_mentions(price, n)).unwrap_or(false);
+            Some(if attested { "oracle".to_string() } else { "self".to_string() })
+        }
+        ["returns", mech, k] => {
+            let r = find_return(spec, mech)?;
+            kv_get(&r.kvs, k).map(expr_to_string)
+        }
+        _ => None,
+    }
+}
+
+fn expr_to_string(e: &Expr) -> String {
+    if let Some(id) = e.as_ident() {
+        id.to_string()
+    } else if let Some(n) = e.as_num() {
+        n.to_string()
+    } else if let Some(path) = e.as_path() {
+        path.join(".")
+    } else {
+        e.render()
+    }
+}
+
+fn want_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn eval_op(op: &str, got: Option<&str>, want: &Value) -> bool {
+    let w = want_string(want);
+    match op {
+        "eq" => got.map(|g| g == w).unwrap_or(false),
+        "ne" => got.map(|g| g != w).unwrap_or(true),
+        "gt" => match (got.and_then(|g| g.parse::<i128>().ok()), w.parse::<i128>().ok()) {
+            (Some(g), Some(t)) => g > t,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Check a spec against a pluggable rule-base. Same engine, any authority's module.
+pub fn check_with_ruleset(spec: &Spec, rs: &RuleSet) -> Vec<Diagnostic> {
+    let mut d = Vec::new();
+    let class = Class::from_str(&spec.class);
+    if let Class::Unknown(s) = &class {
+        d.push(Diagnostic::error("CLASS-1", spec.span, format!("unknown instrument class '{}'", s), ""));
+        return d;
+    }
+    let regime = class.regime();
+    let entry = &rs.json["regimes"][regime]["classes"][&spec.class];
+    if entry.is_null() {
+        d.push(Diagnostic::error(
+            "RULES-1",
+            spec.span,
+            format!("rule-base '{}' has no module for class '{}' (regime '{}')", rs.authority, spec.class, regime),
+            "",
+        ));
+        return d;
+    }
+
+    if let Some(arr) = entry["required_invariants"].as_array() {
+        for inv in arr {
+            if let Some(name) = inv.as_str() {
+                if !spec.has_invariant(name) {
+                    d.push(Diagnostic::error(
+                        "INV-1",
+                        spec.span,
+                        format!("[{}] required invariant '{}' is not declared", rs.authority, name),
+                        "",
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(arr) = entry["constraints"].as_array() {
+        for c in arr {
+            let code = c["code"].as_str().unwrap_or("RULE");
+            let field = c["field"].as_str().unwrap_or("");
+            let op = c["op"].as_str().unwrap_or("eq");
+            let cite = c["citation"].as_str().unwrap_or("");
+            let want = &c["value"];
+            let got = resolve_field(spec, field);
+            if !eval_op(op, got.as_deref(), want) {
+                let gots = got.unwrap_or_else(|| "<undeclared>".to_string());
+                d.push(Diagnostic::error(
+                    code,
+                    spec.span,
+                    format!("[{}] expected {} {} {}, found '{}'", rs.authority, field, op, want_string(want), gots),
+                    cite,
+                ));
+            }
+        }
+    }
+
+    d
 }

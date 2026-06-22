@@ -29,3 +29,15 @@ pub fn compile_check(src: &str) -> Result<(ast::Spec, Vec<sema::Diagnostic>), (S
     let diags = sema::check(&spec);
     Ok((spec, diags))
 }
+
+/// Lex + parse + check against a PLUGGABLE rule-base module (Open Core pillar #2) — the same
+/// engine, any authority's published rule module.
+pub fn compile_check_with_rules(
+    src: &str,
+    ruleset_json: &str,
+) -> Result<(ast::Spec, Vec<sema::Diagnostic>), (String, ast::Span)> {
+    let spec = compile_parse(src)?;
+    let rs = sema::RuleSet::from_json(ruleset_json).map_err(|e| (e, ast::Span::new(0, 0)))?;
+    let diags = sema::check_with_ruleset(&spec, &rs);
+    Ok((spec, diags))
+}

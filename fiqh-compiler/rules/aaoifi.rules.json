@@ -1,0 +1,48 @@
+{
+  "authority": "AAOIFI",
+  "version": "2017",
+  "note": "Rule module — pure data. The engine is separate; this module encodes one authority's rule-base. Citations flagged [scholar-verify]; a qualified board must ratify the module, not the engine.",
+  "regimes": {
+    "islamic": {
+      "classes": {
+        "musharakah_mutanaqisah": {
+          "required_invariants": ["ownership_conserved", "rent_on_living_share", "loss_follows_capital", "price_attested"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "al-Baqarah 2:275; AAOIFI SS No. 12 [scholar-verify]" },
+            { "code": "RISK-1", "field": "risk.loss", "op": "eq", "value": "proportional_to_ownership", "citation": "AAOIFI SS No. 12 [scholar-verify]" },
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "ne", "value": "principal", "citation": "al-Baqarah 2:275 [scholar-verify]" },
+            { "code": "GHARAR-1", "field": "returns.buyout.priceSource", "op": "eq", "value": "oracle", "citation": "prohibition of gharar (Sahih Muslim) [scholar-verify]" }
+          ]
+        },
+        "mudarabah": {
+          "required_invariants": ["capital_from_rabb_al_mal_only", "profit_by_ratio", "loss_on_rabb_al_mal", "no_guaranteed_profit"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "AAOIFI SS No. 13 [scholar-verify]" },
+            { "code": "RISK-2", "field": "risk.loss", "op": "eq", "value": "on_rabb_al_mal", "citation": "AAOIFI SS No. 13 [scholar-verify]" },
+            { "code": "PROFIT-1", "field": "returns.profit.split", "op": "eq", "value": "ratio", "citation": "AAOIFI SS No. 13 [scholar-verify]" }
+          ]
+        },
+        "ijarah_imbt": {
+          "required_invariants": ["rent_for_usufruct", "lessor_bears_ownership_risk", "transfer_separate_from_lease", "no_late_penalty_interest"],
+          "constraints": [
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "eq", "value": "usufruct", "citation": "AAOIFI SS No. 9 [scholar-verify]" },
+            { "code": "RISK-3", "field": "risk.loss", "op": "eq", "value": "on_lessor", "citation": "AAOIFI SS No. 9 [scholar-verify]" },
+            { "code": "RIBA-3", "field": "returns.rent.late_penalty", "op": "eq", "value": "none", "citation": "no interest on a debt [scholar-verify]" }
+          ]
+        }
+      }
+    },
+    "common_law": {
+      "classes": {
+        "commercial_escrow": {
+          "required_invariants": ["certainty_of_terms", "no_penalty_clause", "consideration_present", "dispute_resolution_present"],
+          "constraints": [
+            { "code": "PENALTY-1", "field": "returns.release.damages", "op": "eq", "value": "liquidated", "citation": "Cavendish v Makdessi [2015] UKSC 67 [verify]" },
+            { "code": "CERTAINTY-1", "field": "returns.release.amount", "op": "gt", "value": 0, "citation": "Scammell v Ouston [1941] AC 251 [verify]" },
+            { "code": "DISPUTE-1", "field": "dispute.remedy", "op": "eq", "value": "arbiter_ruling", "citation": "arbitration / good faith [verify]" }
+          ]
+        }
+      }
+    }
+  }
+}
