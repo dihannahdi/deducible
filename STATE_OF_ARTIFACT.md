@@ -51,3 +51,24 @@ publishable proof-of-concept. The remaining distance to *revolutionary* is insti
 a loop cannot cross it. The most valuable next human steps: take the consolidated paper and the
 testnet evidence to (a) a qualified Shari'ah board for review, and (b) a jurisdiction exploring
 tokenized real-asset registries. Allahu a'lam.
+
+---
+
+## Update (iter 11) — fiqhc: compliance-by-construction as a *compiler* (Algorithmic Jurisprudence)
+
+The artifact has been lifted from one hand-written instrument to a **primitive**: `fiqhc`, a
+Rust compiler for a `.fiqh` DSL in which non-compliance is *unrepresentable*. This is the
+"Attention" move — from an artifact to a generator of artifacts that guarantees the conditions
+by construction.
+
+| # | Gate | Mechanism | Verification |
+|---|------|-----------|--------------|
+| C1 | Compliance as a language property | a riba-disguised "partnership" fails to compile | `fiqhc check` exit 1, 6 fiqh-cited diagnostics, no `.sol` emitted |
+| C2 | A primitive, not a one-off | three instruments from one compiler | Musharakah + Mudarabah + Ijarah IMBT; 14 generated Hardhat tests pass; `cargo test` green |
+| C3 | Each instrument self-guards | every class rejects its own riba/gharar negative control | `fiqhc build` refuses 3 controls |
+| C4 | Generated code runs live | one generic runner deploys + exercises any generated contract | `MusharakahMutanaqisahGen` 0.0.9306587 on testnet; `bankShareBps` 8000→6000 on-chain, oracle-priced |
+| C5 | NL subordinate to the gate | DeepSeek drafts `.fiqh`; the same compiler is the authority | first draft refused (invented syntax); second passed → compiled + tested |
+
+Epistemics unchanged and central: the compiler proves consistency with a human-authored,
+citation-bearing rule-base; **it issues no fatwa**. The rule-base awaits a qualified scholar's
+ratification. Write-up: `paper/algorithmic_jurisprudence.md`. Compiler: `fiqh-compiler/`.

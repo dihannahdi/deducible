@@ -1,0 +1,51 @@
+// The headline negative control: a conventional interest-bearing loan dressed in
+// the vocabulary of a diminishing partnership. Economically it is riba; it declares
+// itself a musharakah_mutanaqisah. The compiler MUST refuse to lower it to Solidity.
+//
+// This file is expected to FAIL `fiqhc check` / `fiqhc build` with cited diagnostics.
+// It is never meant to compile — it demonstrates that, in this language, non-compliance
+// is unrepresentable.
+
+instrument FakeDiminishingPartnership : musharakah_mutanaqisah {
+  meta {
+    basis: "a fixed-rate loan presented as a partnership";   // honestly self-incriminating
+  }
+
+  parties {
+    bank   : financier;
+    client : acquirer;
+    valuer : oracle independent;     // declared, but the price below ignores it
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+  }
+
+  returns {
+    rent {
+      basis: principal;              // RIBA-2: "rent" charged on the principal = interest
+      rate: 500 per_period;
+    }
+    buyout {
+      price: 11000;                  // GHARAR-1: a fixed, self-named price that ignores the oracle
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: none;                      // RISK-1: borrower carries all downside
+    capital_guarantee: bank;         // RIBA-1: the bank's capital is guaranteed whole
+  }
+
+  // Deliberately omits loss_follows_capital and price_attested (INV errors):
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

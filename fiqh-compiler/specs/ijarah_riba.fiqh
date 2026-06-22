@@ -1,0 +1,39 @@
+// Negative control for ijarah: a financing lease with interest penalties. Rent is charged
+// on principal, the lessee is made to bear ownership risk, a compounding late penalty
+// accrues to the lessor, and there is no separate transfer of ownership. MUST be refused.
+
+instrument FakeLease : ijarah_imbt {
+  meta {
+    basis: "a financing lease with interest penalties";
+  }
+
+  parties {
+    lessor  : lessor;
+    lessee  : lessee;
+    valuer  : oracle independent;
+    charity : adjudicator;
+  }
+
+  capital {
+    lessor : 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: principal;            // RIBA-2: "rent" charged on principal = interest
+      rate: 1000 per_period;
+      late_penalty: compounding;   // RIBA-3: a compounding interest penalty
+    }
+  }
+
+  risk {
+    loss: on_lessee;               // RISK-3: lessee made to bear the owner's risk
+  }
+
+  // omits the separate transferOwnership step (IJARAH-2) and the required invariants
+
+  lifecycle {
+    activate;
+    payRent;
+  }
+}

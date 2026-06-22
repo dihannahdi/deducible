@@ -1,0 +1,41 @@
+// Negative control for mudarabah: a capital-guaranteed fund dressed as a profit-sharing
+// trust. The mudarib guarantees the capital, the loss is pushed onto the mudarib, profit
+// is a fixed sum, and the realized value is self-reported. MUST be refused.
+
+instrument FakeMudarabah : mudarabah {
+  meta {
+    basis: "a capital-guaranteed fund presented as mudarabah";
+  }
+
+  parties {
+    rabb    : rabb_al_mal;
+    agent   : mudarib;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+  }
+
+  capital {
+    rabb  : 10000 bps;
+    agent : 0 bps;
+  }
+
+  returns {
+    profit {
+      source: agent.selfReport;    // GHARAR-2: self-reported, not independently attested
+      split: fixed;                // PROFIT-1: a fixed guaranteed sum, not a ratio
+      rabb: 6000 bps;
+      agent: 4000 bps;
+    }
+  }
+
+  risk {
+    loss: on_mudarib;              // RISK-2: loss pushed onto the mudarib
+    capital_guarantee: agent;      // RIBA-1: the mudarib guarantees the rabb's capital
+  }
+
+  lifecycle {
+    fund;
+    reportReturn;
+    settle;
+  }
+}

@@ -1,0 +1,49 @@
+// Ijarah Muntahia Bittamleek (lease ending in ownership). Rent prices the usufruct and
+// flows to the lessor; the lessor (owner) bears ownership risk and major maintenance; the
+// transfer of ownership is a SEPARATE act at the end of the term — never two contracts in
+// one; any late charge goes to charity, not to the lessor (no interest on a debt).
+// Citations [scholar-verify]; consistency is not a fatwa.
+
+instrument IjarahImbt : ijarah_imbt {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 9 (Ijarah)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lessor  : lessor;
+    lessee  : lessee;
+    valuer  : oracle independent;
+    charity : adjudicator;     // holds any late charge as sadaqah — never the lessor
+  }
+
+  capital {
+    lessor : 10000 bps;        // the lessor owns the asset outright
+    require lessor == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: usufruct;          // rent prices the usufruct, not principal (anti-riba)
+      rate: 1000 per_period;
+      term: 3;
+      late_penalty: none;       // no interest on a late payment
+    }
+  }
+
+  risk {
+    loss: on_lessor;            // the owner bears the asset's risk during the lease
+  }
+
+  invariant rent_for_usufruct            { rent.basis == usufruct }
+  invariant lessor_bears_ownership_risk  { loss == on_lessor }
+  invariant transfer_separate_from_lease { transferOwnership != payRent }
+  invariant no_late_penalty_interest     { rent.late_penalty == none }
+  invariant role_separation              { valuer != lessor }
+
+  lifecycle {
+    activate;
+    payRent;
+    transferOwnership;
+  }
+}

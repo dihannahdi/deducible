@@ -1,0 +1,60 @@
+{
+  "instrument": "musharakah_mutanaqisah",
+  "contract": "MusharakahMutanaqisahGen",
+  "contractId": "0.0.9306587",
+  "oracleId": "0.0.9306579",
+  "accounts": {
+    "bank": "0.0.9301070",
+    "client": "0.0.9306571",
+    "arbiter": "0.0.9306572",
+    "maslahah": "0.0.9306574",
+    "oracle": "0.0.9306579"
+  },
+  "steps": [
+    {
+      "fn": "fundBank",
+      "as": "bank",
+      "value": 800000,
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "fundClient",
+      "as": "client",
+      "value": 200000,
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "payRent",
+      "as": "client",
+      "target": "contract",
+      "args": [],
+      "value": 8000,
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "buyShare",
+      "as": "client",
+      "target": "contract",
+      "args": [
+        2000
+      ],
+      "value": 200000,
+      "status": "SUCCESS"
+    }
+  ],
+  "reads": [
+    {
+      "fn": "bankShareBps",
+      "got": "6000",
+      "expect": 6000,
+      "ok": true
+    },
+    {
+      "fn": "clientShareBps",
+      "got": "4000",
+      "expect": 4000,
+      "ok": true
+    }
+  ],
+  "operatorBalanceAfter": "22.88387476 ℏ"
+}

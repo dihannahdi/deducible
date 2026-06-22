@@ -1,0 +1,50 @@
+// Mudarabah (profit-sharing trust). Capital from the rabb al-mal alone; the mudarib
+// contributes labor. Profit shared by a pre-agreed ratio; financial loss falls on the
+// rabb al-mal alone (the mudarib loses only effort), absent proven ta'addi/taqsir.
+// Citations [scholar-verify]; consistency is not a fatwa.
+
+instrument Mudarabah : mudarabah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 13 (Mudarabah)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    rabb    : rabb_al_mal;
+    agent   : mudarib;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+  }
+
+  capital {
+    rabb  : 10000 bps;        // the rabb al-mal provides 100% of the capital
+    agent : 0 bps;            // the mudarib contributes labor, not capital
+    require rabb + agent == 10000 bps;
+  }
+
+  returns {
+    profit {
+      source: oracle.realizedProfit;   // realized value attested independently (anti-gharar)
+      split: ratio;                    // pre-agreed RATIO, never a fixed sum (anti-riba)
+      rabb: 6000 bps;
+      agent: 4000 bps;
+    }
+  }
+
+  risk {
+    loss: on_rabb_al_mal;     // financial loss borne by the capital provider alone
+    capital_guarantee: none;  // the mudarib does NOT guarantee the capital
+  }
+
+  invariant capital_from_rabb_al_mal_only { agent == 0 }
+  invariant profit_by_ratio               { profit.split == ratio }
+  invariant loss_on_rabb_al_mal           { loss == on_rabb_al_mal }
+  invariant no_guaranteed_profit          { capital_guarantee == none }
+  invariant role_separation               { valuer != agent }
+
+  lifecycle {
+    fund;
+    reportReturn;
+    settle;
+  }
+}

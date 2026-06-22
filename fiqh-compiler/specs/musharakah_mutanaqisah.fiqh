@@ -1,0 +1,64 @@
+// Musharakah Mutanaqisah (diminishing partnership) — a compliance-by-construction spec.
+//
+// Every fiqh citation below is flagged [scholar-verify]: the compiler proves this
+// specification is CONSISTENT with the declared rule-base, it does NOT issue a fatwa.
+// The diminishing partnership itself carries khilaf; reliance requires a qualified
+// scholar's takhrij. Allahu a'lam.
+
+instrument MusharakahMutanaqisah : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 (Musharakah)";   // [scholar-verify]
+    riba_ref: "al-Baqarah 2:275";                            // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;     // independent attestor — the gharar trust boundary
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;                  // rent on the bank's LIVING share only (anti-riba, I1)
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;      // price tracks attested fair value (anti-gharar, I2)
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;      // proportional loss-sharing (risk-sharing, I3)
+    capital_guarantee: none;              // no guaranteed capital (anti-riba)
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}
