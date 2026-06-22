@@ -94,6 +94,7 @@ const C_PENALTY: &str =
 const C_CERTAINTY: &str = "certainty of terms: Scammell & Nephew v Ouston [1941] AC 251 [verify]";
 const C_CONSIDERATION: &str = "consideration must move from the promisee: Currie v Misa (1875) LR 10 Ex 153 [verify]";
 const C_GOODFAITH: &str = "duty of good faith (UCC sec. 1-304; Yam Seng v ITC [2013] EWHC 111) [verify]";
+const C_ZAKAT: &str = "zakat al-tijarah: rub' al-'ushr (1/40 = 2.5%) on trade goods at haul (a lunar year) + nisab — al-Tawbah 9:103; Sunan Abi Dawud (athar of Samurah b. Jundub on goods prepared for sale); AAOIFI SS No. 35 [scholar-verify]";
 
 /// Run the engine. Returns all diagnostics; callers gate codegen on the presence
 /// of any `Severity::Error`.
@@ -149,7 +150,86 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Unknown(_) => {}
     }
 
+    // Zakat al-Tijarah (enterprise vector #5): optional, but when declared it must be the
+    // agreed rate (1/40), a lunar haul, a positive nisab, and a real beneficiary.
+    check_zakat(spec, &mut d);
+
     d
+}
+
+fn zakat_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {
+    spec.zakat_cfg().into_iter().find(|k| k.key == key).map(|k| &k.val)
+}
+
+/// Validate an optional `zakat { ... }` section. Absent => no built-in zakat routing. When
+/// present, the engine compiles the 2.5% routing into the contract, so corporate zakat
+/// becomes non-bypassable rather than a year-end act of conscience.
+fn check_zakat(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if spec.zakat_cfg().is_empty() {
+        return;
+    }
+    // ZAKAT-1: the rate is rub' al-'ushr — exactly 1/40 (250 bps).
+    match zakat_get(spec, "rate_bps").and_then(|e| e.as_num()) {
+        Some(r) if crate::zakat::is_tijarah_rate(r) => {}
+        Some(r) => d.push(Diagnostic::error(
+            "ZAKAT-1",
+            spec.span,
+            format!("zakat rate is {} bps; zakat al-tijarah is fixed at 250 bps (1/40 = 2.5%)", r),
+            C_ZAKAT,
+        )),
+        None => d.push(Diagnostic::error(
+            "ZAKAT-1",
+            spec.span,
+            "zakat block must declare rate_bps: 250 (1/40 = 2.5%)",
+            C_ZAKAT,
+        )),
+    }
+    // ZAKAT-2: the haul is a HIJRI (lunar) year; a solar year under-collects.
+    match zakat_get(spec, "haul").and_then(|e| e.as_ident()) {
+        Some(h) if crate::zakat::is_lunar_haul(h) => {}
+        Some(h) => d.push(Diagnostic::error(
+            "ZAKAT-2",
+            spec.span,
+            format!("haul '{}' is not a lunar year; zakat's haul is the HIJRI (lunar ~354-day) year — a solar year systematically under-collects", h),
+            C_ZAKAT,
+        )),
+        None => d.push(Diagnostic::error(
+            "ZAKAT-2",
+            spec.span,
+            "zakat block must declare haul: hijri_year",
+            C_ZAKAT,
+        )),
+    }
+    // ZAKAT-3: a positive nisab threshold (the 85g-gold / 595g-silver equivalent).
+    match zakat_get(spec, "nisab").and_then(|e| e.as_num()) {
+        Some(n) if n > 0 => {}
+        _ => d.push(Diagnostic::error(
+            "ZAKAT-3",
+            spec.span,
+            "zakat block must declare a positive nisab (the 85g-gold / 595g-silver equivalent in the ledger's unit)",
+            C_ZAKAT,
+        )),
+    }
+    // ZAKAT-4: a beneficiary that resolves to a declared party or role — the 2.5% needs a home.
+    match zakat_get(spec, "beneficiary").and_then(|e| e.as_ident()) {
+        Some(b) => {
+            let known = spec.parties().iter().any(|p| p.name == b || p.role == b);
+            if !known {
+                d.push(Diagnostic::error(
+                    "ZAKAT-4",
+                    spec.span,
+                    format!("zakat beneficiary '{}' is not a declared party or role (the maslahah / zakat fund must receive the 2.5%)", b),
+                    C_ZAKAT,
+                ));
+            }
+        }
+        None => d.push(Diagnostic::error(
+            "ZAKAT-4",
+            spec.span,
+            "zakat block must declare a beneficiary (e.g. beneficiary: maslahah)",
+            C_ZAKAT,
+        )),
+    }
 }
 
 // --- shared helpers ---
@@ -766,6 +846,7 @@ fn resolve_field(spec: &Spec, field: &str) -> Option<String> {
     match p.as_slice() {
         ["risk", k] => risk_get(spec, k).map(expr_to_string),
         ["dispute", k] => dispute_get(spec, k).map(expr_to_string),
+        ["zakat", k] => zakat_get(spec, k).map(expr_to_string),
         ["returns", "buyout", "priceSource"] => {
             let b = find_return(spec, "buyout")?;
             let price = kv_get(&b.kvs, "price")?;

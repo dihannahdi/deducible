@@ -1,0 +1,51 @@
+// NEGATIVE CONTROL — a zakat layer with a SOLAR haul.
+//
+// Everything is correct except the haul: a gregorian (solar) year. The lunar hijri year is
+// ~11 days shorter, so a solar haul collects zakat ~3% less often over time — it
+// systematically under-pays the poor. This is an error of method, and the compiler refuses
+// it with ZAKAT-2. (The Prophet ﷺ and the Companions reckoned the haul by the lunar
+// calendar; the obligation is tied to it. [scholar-verify])
+instrument MusharakahZakatSolar : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 + SS No. 35";  // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent   { basis: bank.share; rate: 1 per_bps_period; }
+    buyout { price: oracle.fairValue * bps; transfers: bank.share -> client.share; }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  zakat {
+    rate_bps: 250;
+    nisab: 8500000 tinybar;
+    haul: gregorian_year;     // WRONG — the haul is the lunar (hijri) year
+    beneficiary: maslahah;
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+
+  lifecycle { fund; payRent; buyShare(bps); settle; }
+}

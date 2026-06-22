@@ -37,6 +37,7 @@ pub enum Section {
     Risk(Vec<Kv>),
     Oracle(Vec<Kv>),
     Dispute(Vec<Kv>),
+    Zakat(Vec<Kv>),
     Invariant(Invariant),
     Rescission(Vec<RescBlock>),
     Lifecycle(Vec<Step>),
@@ -286,6 +287,14 @@ impl Spec {
         self.sections
             .iter()
             .find_map(|s| if let Section::Dispute(o) = s { Some(o) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn zakat_cfg(&self) -> Vec<&Kv> {
+        self.sections
+            .iter()
+            .find_map(|s| if let Section::Zakat(z) = s { Some(z) } else { None })
             .map(|v| v.iter().collect())
             .unwrap_or_default()
     }

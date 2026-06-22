@@ -18,6 +18,7 @@ pub mod lsp;
 pub mod nl;
 pub mod parser;
 pub mod sema;
+pub mod zakat;
 
 /// Lex + parse only. Returns the AST or a `(message, span)` error.
 pub fn compile_parse(src: &str) -> Result<ast::Spec, (String, ast::Span)> {
