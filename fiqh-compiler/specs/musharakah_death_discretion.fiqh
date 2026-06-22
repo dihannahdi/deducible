@@ -1,0 +1,36 @@
+// NEGATIVE CONTROL — distributing an estate by discretion instead of faraid.
+//
+// The death handler is 'discretion' (let the surviving partners decide). This usurps the
+// shares Allah apportioned; an estate must pass by the furud (al-Nisaʾ 4:11-12, 4:176). The
+// compiler refuses with CONT-2. [scholar-verify]
+instrument MusharakahDeathDiscretion : musharakah_mutanaqisah {
+  meta { basis: "AAOIFI SS No. 12"; currency: tinybar; }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital { bank: 8000 bps; client: 2000 bps; require bank + client == 10000 bps; }
+
+  returns {
+    rent   { basis: bank.share; rate: 1 per_bps_period; }
+    buyout { price: oracle.fairValue * bps; transfers: bank.share -> client.share; }
+  }
+
+  risk { loss: proportional_to_ownership; capital_guarantee: none; }
+
+  contingency {
+    death: discretion;       // WRONG — an estate passes by faraid, not by discretion
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+
+  lifecycle { fund; payRent; buyShare(bps); settle; }
+}

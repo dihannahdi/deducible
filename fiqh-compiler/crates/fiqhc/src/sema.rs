@@ -95,6 +95,8 @@ const C_CERTAINTY: &str = "certainty of terms: Scammell & Nephew v Ouston [1941]
 const C_CONSIDERATION: &str = "consideration must move from the promisee: Currie v Misa (1875) LR 10 Ex 153 [verify]";
 const C_GOODFAITH: &str = "duty of good faith (UCC sec. 1-304; Yam Seng v ITC [2013] EWHC 111) [verify]";
 const C_ZAKAT: &str = "zakat al-tijarah: rub' al-'ushr (1/40 = 2.5%) on trade goods at haul (a lunar year) + nisab — al-Tawbah 9:103; Sunan Abi Dawud (athar of Samurah b. Jundub on goods prepared for sale); AAOIFI SS No. 35 [scholar-verify]";
+const C_JAAIHAH: &str = "wad' al-jawa'ih (remission for blight): the Prophet ﷺ ordered the abatement of a buyer's obligation when goods are struck by a calamity — Sahih Muslim, hadith of Jabir; the loss falls on the owner, never added as interest [scholar-verify]";
+const C_FARAID: &str = "al-fara'id: the estate of a deceased passes by the fixed shares apportioned in al-Nisa' 4:11-12, 4:176 — distribution is by the furud, not by discretion [scholar-verify]";
 
 /// Run the engine. Returns all diagnostics; callers gate codegen on the presence
 /// of any `Severity::Error`.
@@ -154,7 +156,65 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
     // agreed rate (1/40), a lunar haul, a positive nisab, and a real beneficiary.
     check_zakat(spec, &mut d);
 
+    // Contingency off-ramps (enterprise vector #4): jaa'ihah reschedule + faraid dissolution.
+    check_contingency(spec, &mut d);
+
     d
+}
+
+fn contingency_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {
+    spec.contingency_cfg().into_iter().find(|k| k.key == key).map(|k| &k.val)
+}
+
+/// Validate an optional `contingency { ... }` section — the emergency exits a real contract
+/// needs when struck by force majeure or the death of a party. The handlers are constrained:
+/// a jaa'ihah may only RESCHEDULE (never add a penalty/interest), and a death may only invoke
+/// FARAID (never discretionary distribution).
+fn check_contingency(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if spec.contingency_cfg().is_empty() {
+        return;
+    }
+    let mut recognized = false;
+
+    if let Some(h) = contingency_get(spec, "jaaihah").and_then(|e| e.as_ident()) {
+        recognized = true;
+        if h != "reschedule" && h != "abate" {
+            d.push(Diagnostic::error(
+                "CONT-1",
+                spec.span,
+                format!("jaa'ihah handler '{}' is not allowed; a calamity may only 'reschedule' or 'abate' the obligation — never add a penalty or interest", h),
+                C_JAAIHAH,
+            ));
+        }
+    }
+
+    if let Some(h) = contingency_get(spec, "death").and_then(|e| e.as_ident()) {
+        recognized = true;
+        if h != "faraid" {
+            d.push(Diagnostic::error(
+                "CONT-2",
+                spec.span,
+                format!("death handler '{}' is not allowed; an estate must be distributed by faraid (the fixed Qur'anic shares), not by discretion", h),
+                C_FARAID,
+            ));
+        } else if role_party(spec, "arbiter").is_none() && role_party(spec, "adjudicator").is_none() {
+            d.push(Diagnostic::error(
+                "CONT-3",
+                spec.span,
+                "a faraid dissolution requires an arbiter/adjudicator to invoke and attest the distribution",
+                C_FARAID,
+            ));
+        }
+    }
+
+    if !recognized {
+        d.push(Diagnostic::warn(
+            "CONT-4",
+            spec.span,
+            "contingency block declares no recognized off-ramp (expected jaaihah and/or death)",
+            "",
+        ));
+    }
 }
 
 fn zakat_get<'a>(spec: &'a Spec, key: &str) -> Option<&'a Expr> {

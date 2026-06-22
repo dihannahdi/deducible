@@ -12,6 +12,7 @@
 pub mod ast;
 pub mod codegen;
 pub mod composite;
+pub mod faraid;
 pub mod fuzz;
 pub mod lexer;
 pub mod lsp;

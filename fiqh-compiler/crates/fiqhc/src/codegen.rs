@@ -166,6 +166,74 @@ fn mmp_zakat(rate_bps: u64, nisab: u64) -> String {
     )
 }
 
+/// Which contingency off-ramps the spec declares (jaa'ihah reschedule, faraid dissolution).
+fn contingency_cfg(spec: &Spec) -> (bool, bool) {
+    let c = spec.contingency_cfg();
+    let get = |k: &str| c.iter().find(|kv| kv.key == k).and_then(|kv| kv.val.as_ident().map(|s| s.to_string()));
+    let jaaihah = matches!(get("jaaihah").as_deref(), Some("reschedule") | Some("abate"));
+    let faraid = matches!(get("death").as_deref(), Some("faraid"));
+    (jaaihah, faraid)
+}
+
+/// Solidity for the lifecycle off-ramps (enterprise vector #4): a jaa'ihah abates the
+/// obligation without interest and may be rescheduled; a death dissolves the partnership by
+/// faraid — the deceased's escrowed capital passes to the heirs by validated fixed shares.
+fn mmp_contingency(jaaihah: bool, faraid: bool) -> String {
+    let mut s = String::new();
+    if jaaihah {
+        s.push_str(
+            r#"    bool public jaaihah;
+    uint256 public graceDeadline;
+    event JaaihahDeclared(address by);
+    event ObligationsRescheduled(uint256 graceDeadline);
+
+    /// @dev INVARIANT jaaihah_no_riba: a declared calamity ABATES the rent (it falls to zero)
+    ///      and may be rescheduled, but no penalty or interest can ever be added — the loss
+    ///      falls on the owner (wadʿ al-jawaʾih), it is not turned into a debt.
+    function declareJaaihah() external onlyArbiter live { jaaihah = true; emit JaaihahDeclared(msg.sender); }
+    function rescheduleWithoutRiba(uint256 extraSeconds) external onlyArbiter live {
+        require(jaaihah, "no calamity declared");
+        graceDeadline = block.timestamp + extraSeconds; // grace only — no charge is added here
+        emit ObligationsRescheduled(graceDeadline);
+    }
+    function effectiveRentDue() public view returns (uint256) { return jaaihah ? 0 : rentDue(); }
+
+"#,
+        );
+    }
+    if faraid {
+        s.push_str(
+            r#"    event FaraidDissolution(uint256 estate, uint256 heirCount);
+
+    /// @dev INVARIANT death_to_faraid: on the death of the client the partnership dissolves and
+    ///      the client's escrowed capital passes to the heirs by the fixed Qurʾanic shares
+    ///      (computed by the faraid engine off-chain, validated here to total 10000 bps); the
+    ///      bank is made whole. Distribution is by the furud, never by discretion.
+    function dissolveByFaraid(address[] calldata heirs, uint256[] calldata shareBps)
+        external onlyArbiter live nonReentrant
+    {
+        require(bankShareBps == initialBankShareBps, "performance begun");
+        require(heirs.length == shareBps.length && heirs.length > 0, "heirs/shares mismatch");
+        uint256 sumBps;
+        for (uint256 i = 0; i < shareBps.length; i++) { sumBps += shareBps[i]; }
+        require(sumBps == BPS, "faraid shares must total 10000 bps");
+        uint256 estate = clientFunded;
+        uint256 bankRefund = bankFunded;
+        rescinded = true; active = false; pool = 0; bankFunded = 0; clientFunded = 0;
+        for (uint256 i = 0; i < heirs.length; i++) {
+            uint256 part = estate * shareBps[i] / BPS;
+            if (part > 0) { (bool ok, ) = heirs[i].call{value: part}(""); require(ok, "heir xfer"); }
+        }
+        if (bankRefund > 0) { (bool b, ) = bank.call{value: bankRefund}(""); require(b, "bank refund"); }
+        emit FaraidDissolution(estate, heirs.length);
+    }
+
+"#,
+        );
+    }
+    s
+}
+
 fn has_step(spec: &Spec, name: &str) -> bool {
     spec.lifecycle().iter().any(|s| s.name == name)
 }
@@ -259,9 +327,15 @@ fn gen_musharakah(spec: &Spec) -> Result<Generated, String> {
         s.push_str(&mmp_zakat(zrate, znisab));
     }
 
+    // Lifecycle off-ramps (enterprise vector #4): jaa'ihah abatement + faraid dissolution.
+    let (jaaihah, faraid) = contingency_cfg(spec);
+    if jaaihah || faraid {
+        s.push_str(&mmp_contingency(jaaihah, faraid));
+    }
+
     s.push_str("}\n");
 
-    let test_js = gen_musharakah_test(&name, bank_bps, rate, window, zakat);
+    let test_js = gen_musharakah_test(&name, bank_bps, rate, window, zakat, (jaaihah, faraid));
     let descriptor = musharakah_descriptor(spec, &name, bank_bps, rate, window);
 
     Ok(Generated {
@@ -452,8 +526,48 @@ const MMP_UNWIND: &str = r#"    function _unwind() internal {
     }
 "#;
 
-fn gen_musharakah_test(name: &str, bank_bps: u64, rate: u64, window: u64, zakat: Option<(u64, u64)>) -> String {
+fn gen_musharakah_test(
+    name: &str,
+    bank_bps: u64,
+    rate: u64,
+    window: u64,
+    zakat: Option<(u64, u64)>,
+    contingency: (bool, bool),
+) -> String {
     let client_bps = 10_000 - bank_bps;
+    // When the off-ramps are compiled in, prove jaa'ihah abates rent without riba and a faraid
+    // dissolution distributes the client's capital to heirs by validated shares.
+    let (has_jaaihah, has_faraid) = contingency;
+    let mut cont_test = String::new();
+    if has_jaaihah {
+        cont_test.push_str(
+            r#"
+  it("jaaihah_no_riba: a declared calamity abates the rent to zero; no penalty is added", async function () {
+    await fund();
+    await expect(c.connect(arbiter).declareJaaihah()).to.emit(c, "JaaihahDeclared").withArgs(arbiter.address);
+    expect(await c.effectiveRentDue()).to.equal(0n);
+  });
+"#,
+        );
+    }
+    if has_faraid {
+        cont_test.push_str(
+            r#"
+  it("death_to_faraid: dissolution passes the client's capital to heirs by validated shares", async function () {
+    await fund();
+    const estate = (V0 * CLIENT_BPS) / 10000n;
+    const heirs = [valuer.address, maslahah.address];
+    const shares = [7500n, 2500n]; // e.g. a daughter (1/2 + radd) and a mother, per the faraid engine
+    const before = await ethers.provider.getBalance(valuer.address);
+    await expect(c.connect(arbiter).dissolveByFaraid(heirs, shares))
+      .to.emit(c, "FaraidDissolution").withArgs(estate, 2n);
+    const after = await ethers.provider.getBalance(valuer.address);
+    expect(after - before).to.equal((estate * 7500n) / 10000n);
+    expect(await c.rescinded()).to.equal(true);
+  });
+"#,
+        );
+    }
     // When zakat is compiled in, prove the 2.5% routes to the maslahah fund (and nothing below nisab).
     let zakat_test = match zakat {
         Some((zrate, znisab)) => format!(
@@ -545,7 +659,7 @@ describe("{name} (fiqhc-generated) — differential equivalence", function () {{
     await expect(c.connect(client).acceptIqalah()).to.emit(c, "IqalahCompleted").withArgs(client.address);
     expect(await c.rescinded()).to.equal(true);
   }});
-{zakat_test}}});
+{zakat_test}{cont_test}}});
 "#,
         name = name,
         bank_bps = bank_bps,
@@ -553,6 +667,7 @@ describe("{name} (fiqhc-generated) — differential equivalence", function () {{
         rate = rate,
         window = window,
         zakat_test = zakat_test,
+        cont_test = cont_test,
     )
 }
 

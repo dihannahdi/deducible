@@ -1,0 +1,60 @@
+// Musharakah Mutanaqisah WITH lifecycle off-ramps (enterprise vector #4).
+//
+// Real contracts are struck by the unforeseen. The contingency { } section declares the
+// emergency exits the fiqh provides:
+//   - jaaihah: reschedule  — a calamity (blight, pandemic, flood) ABATES the obligation; the
+//     loss falls on the owner and may be rescheduled, but NO interest is ever added
+//     (wadʿ al-jawaʾih — Sahih Muslim, hadith of Jabir). [scholar-verify]
+//   - death: faraid        — the death of a partner dissolves the venture and the deceased's
+//     escrowed capital passes to the heirs by the fixed Qurʾanic shares (al-Nisaʾ 4:11-12,176),
+//     computed by the engine's faraid module, never by discretion. [scholar-verify]
+instrument MusharakahJaaihah : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI SS No. 12 (Musharakah); wadʿ al-jawaʾih; al-faraʾid";  // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent   { basis: bank.share; rate: 1 per_bps_period; }
+    buyout { price: oracle.fairValue * bps; transfers: bank.share -> client.share; }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  contingency {
+    jaaihah: reschedule;     // calamity abates the obligation without interest
+    death:   faraid;         // dissolution distributes by the fixed Qurʾanic shares
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle { fund; payRent; buyShare(bps); settle; }
+}
