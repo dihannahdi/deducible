@@ -10,7 +10,7 @@ fn usage() -> ! {
          usage:\n\
          \x20 fiqhc parse <file.fiqh>          parse and dump the AST\n\
          \x20 fiqhc check <file.fiqh>          run the fiqh invariant engine (no codegen)\n\
-         \x20 fiqhc build <file.fiqh> [opts]   check, then emit Solidity + test + deploy descriptor\n\
+         \x20 fiqhc build <file.fiqh> [opts]   check, then emit code (--target solidity|manifest|zk|all)\n\
          \x20 fiqhc nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
          \x20 fiqhc lsp                        run the Language Server (stdio JSON-RPC, for editors)\n\
          \x20 fiqhc fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n"
@@ -213,8 +213,9 @@ fn main() {
             };
             let want_sol = target == "solidity" || target == "all";
             let want_manifest = target == "manifest" || target == "all";
-            if !want_sol && !want_manifest {
-                eprintln!("fiqhc: unknown --target '{}' (use solidity | manifest | all)", target);
+            let want_zk = target == "zk" || target == "all";
+            if !want_sol && !want_manifest && !want_zk {
+                eprintln!("fiqhc: unknown --target '{}' (use solidity | manifest | zk | all)", target);
                 exit(2);
             }
             let mut emitted: Vec<String> = Vec::new();
@@ -226,6 +227,14 @@ fn main() {
             if want_manifest {
                 let manifest = fiqhc::codegen::build_manifest(&spec);
                 emitted.push(write_out(&root, &format!("fiqh-compiler/out/{}.manifest.json", g.contract_name), &manifest));
+            }
+            if want_zk {
+                let zk = fiqhc::codegen::build_zk(&spec);
+                emitted.push(write_out(&root, &format!("fiqh-compiler/out/{}.circom", zk.circuit_name), &zk.circom));
+                emitted.push(write_out(&root, &format!("fiqh-compiler/out/{}.zk.json", zk.circuit_name), &zk.manifest));
+                if !zk.verifier_consumer.is_empty() {
+                    emitted.push(write_out(&root, &format!("contracts/generated/{}ZkGate.sol", spec.name), &zk.verifier_consumer));
+                }
             }
             println!(
                 "emitted from '{}' ({}) — consistent-by-construction:\n    {}",
