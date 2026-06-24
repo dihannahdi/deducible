@@ -30,7 +30,9 @@ interest) and a deterministic *farāʾiḍ* engine that dissolves a partnership 
 shares on a partner's death; and (5) a zero-knowledge protocol that proves loss-sharing is
 proportional **without revealing the amounts**, reconciling the transparency the protocol needs
 with the privacy a commercial party may keep. Each is implemented in Rust, verified by `cargo
-test`, and — where it touches a contract — proven on a local-EVM Hardhat run; all five are opt-in
+test`, and — where it touches a contract — proven on a local-EVM Hardhat run; the *charge* layer
+is additionally proven **live on the Hedera testnet**, where a generated contract routed exactly
+2.5% (*rubʿ al-ʿushr*) to the *maṣlaḥah* fund on a public network. All five are opt-in
 and leave the existing instruments byte-unchanged. The epistemic boundary is unchanged and
 load-bearing: the engine proves *consistency with a declared, human-authored, citation-bearing
 rule-base*; it issues **no fatwa**. *Allahu aʿlam.*
@@ -347,12 +349,27 @@ identity/gateway layers.
 The full `cargo test` suite is green across all integration binaries; the fuzz harness from the
 prior stage remains clean; and the four base generators are byte-unchanged, so the earlier
 codegen-safety proofs (every external value-mover carries `nonReentrant`; role modifiers and pinned
-pragmas present) continue to hold for the new generated contracts. Two evaluations are deliberately
-*deferred* and we say so plainly: a *live testnet* deploy of a zakat-/jaaihah-/zk-gated contract
-awaits an operator-account top-up (one contract-create costs ~12–35 ℏ at the depressed testnet
-price), and the production ZK path emits a Circom circuit that has not been compiled in-container (a
-*circom* toolchain is not installed; the protocol is proven instead by the Rust sigma-PoC). The
-honesty of these deferrals is itself part of the result.
+pragmas present) continue to hold for the new generated contracts.
+
+**Live on Hedera testnet — the Charge vector.** With the operator account funded, the zakat-gated
+instrument was deployed and exercised on the public testnet, lifting §5.3's claim from a local-EVM
+result to an on-chain one. The generated `MusharakahZakatGen` (contract `0.0.9321137`, oracle
+`0.0.9321135`) ran its full diminishing-partnership lifecycle across role-separated accounts — bank
+`0.0.9301070`, client `0.0.9321131`, arbiter `0.0.9321132`, and a *maṣlaḥah* fund `0.0.9321133` —
+with ownership stepping down on-chain from 8,000 to 6,000 basis points (`fundBank`, `fundClient`,
+`payRent`, `buyShare`, all `SUCCESS`). The *zakāt* routing was then proven directly: a `payZakat`
+against a base of 10,000,000 tinybar moved the *maṣlaḥah* fund's balance from 20,000,000 to
+20,250,000 tinybar — a transfer of exactly **250,000, precisely 2.5% (*rubʿ al-ʿushr*)**, between
+distinct accounts on a public network — while `zakatDue` returned 0 for a base below the *niṣāb*.
+The full record is `deployments/testnet_zakat.json`. *Rubʿ al-ʿushr* thus moved from a number a
+board would compute at year-end to a quantity the contract itself remits, verifiably, on a live
+ledger.
+
+Two evaluations remain deliberately *deferred*, and we say so plainly: a *live testnet* deploy of
+the *jawāʾiḥ*- and *zk*-gated contracts (each proven on a local EVM; the one-command path is the
+same now demonstrated for the *charge* layer), and the production ZK path, whose emitted Circom
+circuit has not been compiled in-container (a *circom* toolchain is not installed; the protocol is
+proven instead by the Rust sigma-PoC). The honesty of these deferrals is itself part of the result.
 
 ## 7. Discussion
 
@@ -420,9 +437,12 @@ execution; *zakāt* became an exact charge routed at the syntax tree; calamity c
 death could only distribute by the fixed shares; and proportional loss became a property provable
 without disclosure.
 
-What remains is the work no compiler can do for us: the live deployment that awaits only a faucet;
-the production proof circuit that awaits a toolchain; and, above all, the scholar's ratification of
-each contested rule-base, the law's recognition of tokenised title, and a community's adoption. The
+The *charge* layer has since been proven on the public Hedera testnet — a generated contract
+remitting exactly *rubʿ al-ʿushr* to a *maṣlaḥah* account — and what remains is the work no compiler
+can do for us: the remaining live deployments (the calamity- and zero-knowledge-gated contracts,
+along the same one-command path); the production proof circuit that awaits a toolchain; and, above
+all, the scholar's ratification of each contested rule-base, the law's recognition of tokenised
+title, and a community's adoption. The
 machine has been carried as far toward the *whole* of *fiqh al-muʿāmalāt* as construction can carry
 it — to the point where non-compliance is, layer by layer, unrepresentable. The rest is *istiftāʾ*,
 and trust, and time. *Allahu aʿlam.*

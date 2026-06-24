@@ -1,0 +1,69 @@
+{
+  "instrument": "musharakah_mutanaqisah+zakat",
+  "contract": "MusharakahZakatGen",
+  "contractId": "0.0.9321137",
+  "oracleId": "0.0.9321135",
+  "accounts": {
+    "bank": "0.0.9301070",
+    "client": "0.0.9321131",
+    "arbiter": "0.0.9321132",
+    "maslahah": "0.0.9321133"
+  },
+  "steps": [
+    {
+      "fn": "fundBank",
+      "value": 800000,
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "fundClient",
+      "value": 200000,
+      "as": "client",
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "payRent",
+      "value": 8000,
+      "as": "client",
+      "status": "SUCCESS"
+    },
+    {
+      "fn": "buyShare",
+      "args": [
+        2000
+      ],
+      "value": 200000,
+      "as": "client",
+      "status": "SUCCESS"
+    }
+  ],
+  "reads": [
+    {
+      "fn": "bankShareBps",
+      "got": "6000",
+      "expect": "6000",
+      "ok": true
+    },
+    {
+      "fn": "clientShareBps",
+      "got": "4000",
+      "expect": "4000",
+      "ok": true
+    }
+  ],
+  "zakat": {
+    "base": "10000000",
+    "expectedDue": "250000",
+    "payZakatStatus": "SUCCESS",
+    "maslahahBefore": "20000000",
+    "maslahahAfter": "20250000",
+    "maslahahDelta": "250000",
+    "deltaEqualsDue": true,
+    "zakatDueRead": "250000",
+    "zakatDueReadOk": true,
+    "belowNisabRead": "0",
+    "belowNisabOk": true,
+    "ratePctOfBase": 2.5
+  },
+  "operatorBalanceAfter": "39.41933583 ℏ"
+}
