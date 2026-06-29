@@ -1,0 +1,36 @@
+// Sukuk (investment certificates) — the first MULTILATERAL instrument. The holders are a pool
+// (undivided ownership shares totalling 10000 bps); each sukuk is a share in a real asset, and the
+// return is the asset's rental income distributed PRO-RATA — not interest on a debt. A sukuk that
+// guarantees principal plus a fixed coupon is a bond (riba), not sukuk. Citations [scholar-verify].
+
+instrument Sukuk : sukuk {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 17 (Investment Sukuk)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    originator : issuer;
+  }
+
+  pool {
+    holderA: 5000 bps;
+    holderB: 3000 bps;
+    holderC: 2000 bps;
+  }
+
+  returns {
+    income {
+      basis:        asset_rental;  // the return is the asset's rental, not interest
+      distribution: pro_rata;      // distributed by each holder's ownership share
+    }
+  }
+
+  invariant return_is_asset_based { income.basis == asset_rental }
+  invariant pro_rata_distribution { income.distribution == pro_rata }
+
+  lifecycle {
+    issue;            // issuer issues sukuk to the holder pool
+    distributeIncome; // rental income distributed pro-rata
+  }
+}

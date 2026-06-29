@@ -39,6 +39,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Ariyah => gen_ariyah(spec),
         Class::Musharakah => gen_musharakah_full(spec),
         Class::Muzaraah => gen_muzaraah(spec),
+        Class::Sukuk => gen_sukuk(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -143,6 +144,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("MUZARA-1", "returns.harvest_share.basis", "eq", json!("output_ratio"), "yield shared by ratio of the actual output [scholar-verify]");
             add("MUZARA-2", "returns.harvest_share.fixed_rent", "eq", json!("none"), "no fixed rent on the land regardless of harvest [scholar-verify]");
         }
+        Class::Sukuk => {
+            add("SUKUK-1", "returns.income.basis", "eq", json!("asset_rental"), "the return is the asset's rental/profit, not interest; AAOIFI SS 17 [scholar-verify]");
+            add("SUKUK-2", "returns.income.distribution", "eq", json!("pro_rata"), "income distributed pro-rata to undivided ownership shares [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -174,6 +179,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Ariyah => vec!["muir", "mustair"],
         Class::Musharakah => vec!["partner"],
         Class::Muzaraah => vec!["landowner", "cultivator"],
+        Class::Sukuk => vec!["issuer", "holder"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -3805,6 +3811,141 @@ fn muzaraah_descriptor(name: &str, owner_bps: u64) -> String {
 "#,
         name = name,
         owner_bps = owner_bps,
+    )
+}
+
+// =====================================================================================
+// Sukuk (investment certificates) — the FIRST multilateral instrument. The holders are a pool
+// (address[] + uint16[] shares, the faraid array pattern generalised); the issuer distributes the
+// asset's rental income PRO-RATA to their undivided ownership shares. No oracle.
+// =====================================================================================
+
+fn pool_shares(spec: &Spec) -> Vec<u64> {
+    spec.pool().into_iter().filter_map(|kv| kv.val.as_num()).collect()
+}
+
+fn gen_sukuk(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let shares = pool_shares(spec);
+    let mut s = provenance_doc(spec, &format!("{} — sukuk (undivided ownership, pro-rata income) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(SUKUK_BODY);
+    s.push_str("}\n");
+    let test_js = gen_sukuk_test(&name, &shares);
+    let descriptor = sukuk_descriptor(&name, &shares);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const SUKUK_BODY: &str = r#"    address public immutable issuer;
+    address[] public holders;
+    uint16[] public sharesBps;
+    uint256 public constant BPS = 10000;
+    bool public distributed;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyIssuer() { require(msg.sender == issuer, "only issuer"); _; }
+
+    event IncomeDistributed(uint256 total);
+
+    /// @dev INVARIANT ownership shares total 10000 bps; each sukuk is an undivided share.
+    constructor(address[] memory _holders, uint16[] memory _sharesBps) {
+        require(_holders.length == _sharesBps.length && _holders.length >= 2, "holders/shares mismatch");
+        uint256 sum;
+        for (uint256 i = 0; i < _sharesBps.length; i++) {
+            require(_holders[i] != address(0), "zero holder");
+            sum += _sharesBps[i];
+            holders.push(_holders[i]);
+            sharesBps.push(_sharesBps[i]);
+        }
+        require(sum == BPS, "ownership shares must total 10000 bps");
+        issuer = msg.sender;
+    }
+
+    /// @dev INVARIANT return_is_asset_based + pro_rata_distribution: the issuer distributes the
+    ///      asset's rental income PRO-RATA to the holders' undivided ownership shares — not interest.
+    function distributeIncome() external payable onlyIssuer nonReentrant {
+        require(msg.value > 0, "no income");
+        uint256 total = msg.value;
+        for (uint256 i = 0; i < holders.length; i++) {
+            uint256 part = (total * sharesBps[i]) / BPS;
+            if (part > 0) { (bool ok, ) = holders[i].call{value: part}(""); require(ok, "to holder"); }
+        }
+        distributed = true;
+        emit IncomeDistributed(total);
+    }
+"#;
+
+fn gen_sukuk_test(name: &str, shares: &[u64]) -> String {
+    let n = shares.len();
+    let shares_js = shares.iter().map(|s| format!("{}n", s)).collect::<Vec<_>>().join(", ");
+    format!(
+        r#"// Generated by fiqhc — Sukuk (multilateral). Proves undivided shares total 10000 and the
+// asset's income is distributed pro-rata to the holder pool.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — sukuk", function () {{
+  let issuer, holders, c;
+  const SHARES = [{shares_js}];
+  const TOTAL = 1000000n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    const signers = await ethers.getSigners();
+    issuer = signers[0];
+    holders = signers.slice(1, 1 + {n});
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(issuer).deploy(holders.map(h => h.address), SHARES);
+    await c.waitForDeployment();
+  }});
+
+  it("pro_rata_distribution: rental income is split by each holder's ownership share", async function () {{
+    const before = await Promise.all(holders.map(h => ethers.provider.getBalance(h.address)));
+    await c.connect(issuer).distributeIncome({{ value: TOTAL }});
+    for (let i = 0; i < holders.length; i++) {{
+      const after = await ethers.provider.getBalance(holders[i].address);
+      expect(after - before[i]).to.equal((TOTAL * SHARES[i]) / BPS);
+    }}
+  }});
+
+  it("ownership shares must total 10000 bps (else deployment reverts)", async function () {{
+    const F = await ethers.getContractFactory("{name}");
+    const bad = SHARES.map((s, i) => (i === 0 ? s + 100n : s)); // breaks the sum
+    await expect(F.connect(issuer).deploy(holders.map(h => h.address), bad)).to.be.revertedWith("ownership shares must total 10000 bps");
+  }});
+
+  it("only the issuer distributes income", async function () {{
+    await expect(c.connect(holders[0]).distributeIncome({{ value: TOTAL }})).to.be.revertedWith("only issuer");
+  }});
+}});
+"#,
+        name = name,
+        shares_js = shares_js,
+        n = n,
+    )
+}
+
+fn sukuk_descriptor(name: &str, shares: &[u64]) -> String {
+    let shares_json = shares.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", ");
+    format!(
+        r#"{{
+  "instrument": "sukuk",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "issuer",
+  "oracle": null,
+  "pool": {{ "shares_bps": [{shares_json}] }},
+  "constructorAbi": ["address[]","uint16[]"],
+  "constructorArgs": ["@holders", [{shares_json}]],
+  "accounts": ["holders"],
+  "lifecycle": [
+    {{ "as": "issuer", "fn": "distributeIncome", "value": 1000000, "note": "distribute rental income pro-rata to holders" }}
+  ],
+  "reads": ["distributed"]
+}}
+"#,
+        name = name,
+        shares_json = shares_json,
     )
 }
 

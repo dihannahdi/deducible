@@ -39,6 +39,9 @@ pub enum Section {
     Dispute(Vec<Kv>),
     Zakat(Vec<Kv>),
     Contingency(Vec<Kv>),
+    /// A multilateral participant pool (sukuk holders, takaful participants, mudarabah rabbs):
+    /// `pool { name: <bps>; ... }`, the shares summing to 10000 bps.
+    Pool(Vec<Kv>),
     Invariant(Invariant),
     Rescission(Vec<RescBlock>),
     Lifecycle(Vec<Step>),
@@ -304,6 +307,15 @@ impl Spec {
         self.sections
             .iter()
             .find_map(|s| if let Section::Contingency(c) = s { Some(c) } else { None })
+            .map(|v| v.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// The multilateral participant pool (sukuk holders / takaful participants / mudarabah rabbs).
+    pub fn pool(&self) -> Vec<&Kv> {
+        self.sections
+            .iter()
+            .find_map(|s| if let Section::Pool(p) = s { Some(p) } else { None })
             .map(|v| v.iter().collect())
             .unwrap_or_default()
     }

@@ -1,0 +1,35 @@
+// NEGATIVE CONTROL — a "sukuk" that is really a bond. Two faults:
+//   (1) income basis: principal_plus_coupon — a guaranteed principal + fixed return is interest -> SUKUK-1.
+//   (2) distribution: fixed — a fixed coupon, not pro-rata of the asset's actual income -> SUKUK-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument SukukRiba : sukuk {
+  meta {
+    basis: "an interest bond dressed as sukuk";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    originator : issuer;
+  }
+
+  pool {
+    holderA: 5000 bps;
+    holderB: 5000 bps;
+  }
+
+  returns {
+    income {
+      basis:        principal_plus_coupon;  // SUKUK-1: a bond return (riba)
+      distribution: fixed;                  // SUKUK-2: a fixed coupon, not pro-rata
+    }
+  }
+
+  invariant return_is_asset_based { income.basis == asset_rental }
+  invariant pro_rata_distribution { income.distribution == pro_rata }
+
+  lifecycle {
+    issue;
+    distributeIncome;
+  }
+}

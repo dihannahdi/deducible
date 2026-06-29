@@ -1,0 +1,34 @@
+// NEGATIVE CONTROL — the multilateral pool primitive's own guard. The holders' shares sum to 9000
+// bps, not 10000 — a tenth of the ownership is unaccounted for -> POOL-1. The compiler must REFUSE.
+
+instrument SukukBadPool : sukuk {
+  meta {
+    basis: "a sukuk whose ownership shares do not total 100%";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    originator : issuer;
+  }
+
+  pool {
+    holderA: 5000 bps;
+    holderB: 3000 bps;
+    holderC: 1000 bps;   // POOL-1: sums to 9000, not 10000
+  }
+
+  returns {
+    income {
+      basis:        asset_rental;
+      distribution: pro_rata;
+    }
+  }
+
+  invariant return_is_asset_based { income.basis == asset_rental }
+  invariant pro_rata_distribution { income.distribution == pro_rata }
+
+  lifecycle {
+    issue;
+    distributeIncome;
+  }
+}

@@ -22,6 +22,8 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_SUKUK: &str = "ṣukūk (investment certificates): AAOIFI Shari'ah Standard No. 17; each ṣakk is an UNDIVIDED OWNERSHIP share in a real asset / usufruct / venture, NOT a debt — the holder's return is the asset's rental or profit distributed PRO-RATA, and the holder bears the asset's risk; a ṣukūk that guarantees the principal plus a fixed return is a bond (riba), not ṣukūk [scholar-verify]";
+const C_POOL: &str = "a multilateral participant pool — the participants' shares must total the whole (10000 bps) and there must be at least two of them [scholar-verify]";
 const C_MUSHARAKAH: &str = "mushārakah (sharikat al-ʿaqd): AAOIFI Shari'ah Standard No. 12; profit is shared by a pre-agreed RATIO (which may differ from the capital ratio), but loss is borne STRICTLY in proportion to capital — 'al-ribḥ ʿala mā shtaraṭā wa-l-waḍīʿa ʿala qadr al-māl' (athar of ʿAli, by ijmaʿ for the loss rule); no partner guarantees another's capital [scholar-verify]";
 const C_MUZARA: &str = "muzāraʿa (sharecropping): the Prophet ﷺ engaged the people of Khaybar for a SHARE of what the land produced of fruit or crop (Sahih al-Bukhari, Sahih Muslim); the yield is shared by a known ratio of the ACTUAL output — a fixed quantity to either party, or a fixed rent on the land regardless of the harvest, is the forbidden form (it guarantees one party against the other's risk) [scholar-verify]";
 const C_JUALA: &str = "juʿala (reward for a result): Yusuf 12:72 ('and for him who produces it is a camel-load, and I am responsible for it'); AAOIFI Shari'ah Standard No. 15; the reward (juʿl) must be known (maʿlūm), and it is due only on COMPLETION of the specified result — the worker (ʿamil) bears the risk of non-completion [scholar-verify]";
@@ -95,6 +97,7 @@ pub enum Class {
     Ariyah,
     Musharakah,
     Muzaraah,
+    Sukuk,
     CommercialEscrow,
     Unknown(String),
 }
@@ -121,6 +124,7 @@ impl Class {
             "ariyah" => Class::Ariyah,
             "musharakah" => Class::Musharakah,
             "muzaraah" => Class::Muzaraah,
+            "sukuk" => Class::Sukuk,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -212,6 +216,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Ariyah => check_ariyah(spec, &mut d),
         Class::Musharakah => check_musharakah_full(spec, &mut d),
         Class::Muzaraah => check_muzaraah(spec, &mut d),
+        Class::Sukuk => check_sukuk(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1543,6 +1548,57 @@ fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
+}
+
+// --- Multilateral participant pool (sukuk holders / takaful participants / mudarabah rabbs) ---
+//
+// The pool generalises a contracting role from one party to MANY, each with a share. The shares
+// must total the whole (POOL-1) and there must be at least two participants (POOL-2). This is the
+// multilateral primitive beyond the bilateral 'aqd. (Reused by sukuk and others.)
+fn check_pool(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let members = spec.pool();
+    if members.is_empty() {
+        d.push(Diagnostic::error("POOL-2", spec.span, "a multilateral instrument requires a pool { ... } of participants", C_POOL));
+        return;
+    }
+    if members.len() < 2 {
+        d.push(Diagnostic::error("POOL-2", spec.span, "a pool requires at least two participants (else it is a bilateral contract)", C_POOL));
+    }
+    let sum: u64 = members.iter().filter_map(|kv| kv.val.as_num()).sum();
+    if sum != 10_000 {
+        d.push(Diagnostic::error("POOL-1", spec.span, format!("the pool shares sum to {} bps; the participants' shares must total exactly 10000 bps", sum), C_POOL));
+    }
+}
+
+// --- Sukuk (investment certificates) ---
+//
+// Each sukuk is an UNDIVIDED OWNERSHIP share in a real asset; the return is the asset's rental/
+// profit distributed PRO-RATA to the holders (the multilateral pool), NOT interest on a debt.
+fn check_sukuk(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if role_party(spec, "issuer").is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "sukuk requires a party with role 'issuer' (the originator)", C_SUKUK));
+    }
+    check_pool(spec, d);
+
+    match find_return(spec, "income") {
+        None => d.push(Diagnostic::error("SUKUK-1", spec.span, "sukuk requires returns { income { basis; distribution } }", C_SUKUK)),
+        Some(inc) => {
+            // SUKUK-1: the return is asset-based (rental/profit), not interest on a debt.
+            match kv_get(&inc.kvs, "basis").and_then(|e| e.as_ident()) {
+                Some("asset_rental") | Some("asset_profit") => {}
+                Some(other) => d.push(Diagnostic::error("SUKUK-1", inc.span, format!("income basis is '{}'; a sukuk return is the asset's rental/profit, not interest — a guaranteed fixed return on principal is a bond (riba)", other), C_SUKUK)),
+                None => d.push(Diagnostic::error("SUKUK-1", inc.span, "sukuk must declare income basis: asset_rental (or asset_profit)", C_SUKUK)),
+            }
+            // SUKUK-2: distributed pro-rata to the undivided ownership shares.
+            match kv_get(&inc.kvs, "distribution").and_then(|e| e.as_ident()) {
+                Some("pro_rata") => {}
+                Some(other) => d.push(Diagnostic::error("SUKUK-2", inc.span, format!("distribution is '{}'; sukuk income is distributed PRO-RATA to the holders' ownership shares", other), C_SUKUK)),
+                None => d.push(Diagnostic::error("SUKUK-2", inc.span, "sukuk must declare distribution: pro_rata", C_SUKUK)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["return_is_asset_based", "pro_rata_distribution"], d);
 }
 
 // --- Musharakah (full partnership, sharikat al-'aqd) ---
