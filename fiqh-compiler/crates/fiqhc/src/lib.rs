@@ -16,6 +16,7 @@ pub mod faraid;
 pub mod fuzz;
 pub mod lexer;
 pub mod lsp;
+pub mod maqasid;
 pub mod nl;
 pub mod parser;
 pub mod sema;

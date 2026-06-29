@@ -162,6 +162,7 @@ const C_GOODFAITH: &str = "duty of good faith (UCC sec. 1-304; Yam Seng v ITC [2
 const C_ZAKAT: &str = "zakat al-tijarah: rub' al-'ushr (1/40 = 2.5%) on trade goods at haul (a lunar year) + nisab — al-Tawbah 9:103; Sunan Abi Dawud (athar of Samurah b. Jundub on goods prepared for sale); AAOIFI SS No. 35 [scholar-verify]";
 const C_ASNAF: &str = "the eight categories of zakat recipients (aṣnāf): al-Tawba 9:60 — al-fuqarāʾ, al-masākīn, al-ʿāmilīn ʿalayhā, al-muʾallafa qulūbuhum, fī al-riqāb, al-ghārimīn, fī sabīlillāh, ibn al-sabīl [scholar-verify]";
 const C_JAAIHAH: &str = "wad' al-jawa'ih (remission for blight): the Prophet ﷺ ordered the abatement of a buyer's obligation when goods are struck by a calamity — Sahih Muslim, hadith of Jabir; the loss falls on the owner, never added as interest [scholar-verify]";
+const C_MAQASID: &str = "maqasid al-shari'ah: the engine polices FORM (consistency with a cited rule-base); the maqsad (purpose/intent) and the question of hiyal (circumvention) are the scholar's — this is a SURFACED RISK, never a ruling. cf. al-Shatibi, al-Muwafaqat; Ibn al-Qayyim, I'lam al-Muwaqqi'in (on the hiyal) [scholar-verify]";
 const C_FARAID: &str = "al-fara'id: the estate of a deceased passes by the fixed shares apportioned in al-Nisa' 4:11-12, 4:176 — distribution is by the furud, not by discretion [scholar-verify]";
 
 /// Run the engine. Returns all diagnostics; callers gate codegen on the presence
@@ -246,6 +247,12 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
 
     // Contingency off-ramps (enterprise vector #4): jaa'ihah reschedule + faraid dissolution.
     check_contingency(spec, &mut d);
+
+    // Maqasid / hiyal-risk surfacing — WARNINGS only, never errors. The engine polices form; this
+    // flags where a form-compliant contract's PURPOSE a scholar should examine (the hiyal ceiling).
+    for (code, msg) in crate::maqasid::surface(spec) {
+        d.push(Diagnostic::warn(code, spec.span, msg, C_MAQASID));
+    }
 
     d
 }
