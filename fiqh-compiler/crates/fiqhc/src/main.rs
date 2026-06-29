@@ -149,11 +149,13 @@ fn main() {
             let mut spec_path: Option<String> = None;
             let mut root = String::from("..");
             let mut target = String::from("all"); // solidity | manifest | all
+            let mut rules: Option<String> = None; // optional governing authority / madhhab module
             let mut it = args.iter().skip(2);
             while let Some(a) = it.next() {
                 match a.as_str() {
                     "--root" => root = it.next().cloned().unwrap_or_else(|| usage()),
                     "--target" => target = it.next().cloned().unwrap_or_else(|| usage()),
+                    "--rules" => rules = it.next().cloned(),
                     _ => {
                         if spec_path.is_none() {
                             spec_path = Some(a.clone());
@@ -189,18 +191,43 @@ fn main() {
                     }
                 }
             }
-            let (spec, diags) = match fiqhc::compile_check(&src) {
-                Ok(x) => x,
+            let spec = match fiqhc::compile_parse(&src) {
+                Ok(s) => s,
                 Err((msg, span)) => {
                     eprintln!("{}:{}:{}: parse error: {}", path, span.line, span.col, msg);
                     exit(1);
                 }
             };
+            // The builtin engine always runs (the universal fiqh core + maqasid warnings). If an
+            // authority/madhhab module is chosen (--rules or meta { rules }), its constraints are
+            // LAYERED on top, so the chosen authority governs whether the contract is GENERATED.
+            let mut diags = fiqhc::sema::check(&spec);
+            let eff = rules.or_else(|| {
+                spec.meta()
+                    .into_iter()
+                    .find(|k| k.key == "rules")
+                    .and_then(|k| k.val.as_str().map(|s| s.to_string()).or_else(|| k.val.as_ident().map(|s| s.to_string())))
+            });
+            let authority = match eff {
+                Some(name) => match load_ruleset(&name) {
+                    Ok(rs) => {
+                        let label = rs.label();
+                        diags.extend(fiqhc::sema::check_with_ruleset(&spec, &rs));
+                        Some(label)
+                    }
+                    Err(e) => {
+                        eprintln!("deducible: {}", e);
+                        exit(2);
+                    }
+                },
+                None => None,
+            };
             let errors = report(&path, &diags);
             if errors > 0 {
+                let base = authority.as_deref().unwrap_or("its declared fiqh");
                 eprintln!(
-                    "\nrefused: '{}' is INCONSISTENT with its declared fiqh rule-base ({} error(s)). No contract emitted.",
-                    spec.name, errors
+                    "\nrefused: '{}' is INCONSISTENT with the {} rule-base ({} error(s)). No contract emitted.",
+                    spec.name, base, errors
                 );
                 exit(1);
             }
@@ -236,9 +263,10 @@ fn main() {
                     emitted.push(write_out(&root, &format!("contracts/generated/{}ZkGate.sol", spec.name), &zk.verifier_consumer));
                 }
             }
+            let gov = authority.as_deref().map(|a| format!(" [governed by {}]", a)).unwrap_or_default();
             println!(
-                "emitted from '{}' ({}) — consistent-by-construction:\n    {}",
-                spec.name, g.instrument, emitted.join("\n    ")
+                "emitted from '{}' ({}){} — consistent-by-construction:\n    {}",
+                spec.name, g.instrument, gov, emitted.join("\n    ")
             );
         }
         "lsp" => fiqhc::lsp::run(),

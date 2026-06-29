@@ -13,5 +13,5 @@ name = "fiqhc"
 path = "src/lib.rs"
 
 [[bin]]
-name = "deducible"
+name = "deduce"
 path = "src/main.rs"
