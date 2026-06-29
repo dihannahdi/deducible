@@ -1,0 +1,44 @@
+// Musharakah (full partnership, sharikat al-'aqd). Two partners pool capital; profit is shared by a
+// pre-agreed RATIO (which may differ from the capital ratio), but loss is borne STRICTLY by capital
+// share, and no partner guarantees another's capital. Citations [scholar-verify].
+
+instrument Musharakah : musharakah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 (Sharikah); al-ribh 'ala ma shtarata wa al-wadi'a 'ala qadr al-mal";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    partnerA : partner;
+    partnerB : partner;
+  }
+
+  capital {
+    partnerA : 6000 bps;
+    partnerB : 4000 bps;
+    require partnerA + partnerB == 10000 bps;
+  }
+
+  returns {
+    profit {
+      split: ratio;       // pre-agreed ratio, never a fixed sum
+      partnerA: 5000 bps; // the profit ratio may differ from the capital ratio
+      partnerB: 5000 bps;
+    }
+  }
+
+  risk {
+    loss: proportional_to_capital;  // loss strictly by capital share
+    capital_guarantee: none;
+  }
+
+  invariant profit_by_ratio      { profit.split == ratio }
+  invariant loss_by_capital      { loss == proportional_to_capital }
+  invariant no_capital_guarantee { capital_guarantee == none }
+
+  lifecycle {
+    fund;
+    reportProfit;
+    distribute;
+  }
+}

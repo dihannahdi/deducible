@@ -37,6 +37,8 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Ijarah => gen_ijarah_plain(spec),
         Class::Juala => gen_juala(spec),
         Class::Ariyah => gen_ariyah(spec),
+        Class::Musharakah => gen_musharakah_full(spec),
+        Class::Muzaraah => gen_muzaraah(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -132,6 +134,15 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("ARIYAH-1", "returns.loan_use.fee", "eq", json!("none"), "ʿariyya is gratuitous (a charge makes it ijara) [scholar-verify]");
             add("ARIYAH-2", "returns.loan_use.return", "eq", json!("same_asset"), "the same asset returns; only its usufruct was lent [scholar-verify]");
         }
+        Class::Musharakah => {
+            add("RIBA-1", "risk.capital_guarantee", "eq", json!("none"), "no partner guarantees another's capital; AAOIFI SS 12 [scholar-verify]");
+            add("RISK-1", "risk.loss", "eq", json!("proportional_to_capital"), "loss strictly by capital share (al-wadi'a 'ala qadr al-mal) [scholar-verify]");
+            add("PROFIT-1", "returns.profit.split", "eq", json!("ratio"), "profit by a pre-agreed ratio [scholar-verify]");
+        }
+        Class::Muzaraah => {
+            add("MUZARA-1", "returns.harvest_share.basis", "eq", json!("output_ratio"), "yield shared by ratio of the actual output [scholar-verify]");
+            add("MUZARA-2", "returns.harvest_share.fixed_rent", "eq", json!("none"), "no fixed rent on the land regardless of harvest [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -161,6 +172,8 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Ijarah => vec!["lessor", "lessee"],
         Class::Juala => vec!["jail", "amil"],
         Class::Ariyah => vec!["muir", "mustair"],
+        Class::Musharakah => vec!["partner"],
+        Class::Muzaraah => vec!["landowner", "cultivator"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -3542,6 +3555,256 @@ fn ariyah_descriptor(name: &str) -> String {
 }}
 "#,
         name = name,
+    )
+}
+
+// =====================================================================================
+// Musharakah (full partnership). settle() distributes the liquidated proceeds: profit (over the
+// total capital) by the profit ratio, and on a loss each partner bears it by capital share. No oracle.
+// =====================================================================================
+
+fn gen_musharakah_full(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let cap_a = party_bps(spec, "partner").unwrap_or(6000);
+    let profit_a = profit_share(spec, "partner").unwrap_or(5000);
+    let mut s = provenance_doc(spec, &format!("{} — musharakah (full partnership) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(MUSHARAKAH_FULL_BODY);
+    s.push_str("}\n");
+    let test_js = gen_musharakah_full_test(&name, cap_a, profit_a);
+    let descriptor = musharakah_full_descriptor(&name, cap_a, profit_a);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const MUSHARAKAH_FULL_BODY: &str = r#"    address public immutable partnerA;
+    address public immutable partnerB;
+    uint256 public immutable totalCapital;
+    uint256 public immutable capitalABps; // partner A's capital share
+    uint256 public immutable profitABps;  // partner A's profit share (may differ from capital)
+    uint256 public constant BPS = 10000;
+
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyPartnerA() { require(msg.sender == partnerA, "only partner A"); _; }
+
+    event Settled(uint256 realized, uint256 toA, uint256 toB);
+
+    constructor(address _partnerB, uint256 _totalCapital, uint256 _capitalABps, uint256 _profitABps) {
+        require(_partnerB != address(0), "zero addr");
+        require(_partnerB != msg.sender, "partners must be distinct");
+        require(_capitalABps > 0 && _capitalABps < BPS, "capital split");
+        require(_profitABps <= BPS, "profit split");
+        partnerA = msg.sender; partnerB = _partnerB;
+        totalCapital = _totalCapital; capitalABps = _capitalABps; profitABps = _profitABps;
+    }
+
+    /// @dev INVARIANT profit_by_ratio: profit (over the capital) is split by the profit ratio.
+    ///      INVARIANT loss_by_capital: a shortfall is borne by each partner in proportion to capital.
+    ///      INVARIANT no_capital_guarantee: neither partner is topped up — the realized value is split as-is.
+    function settle(uint256 realized) external payable onlyPartnerA nonReentrant {
+        require(!settled, "settled");
+        require(msg.value == realized, "send exactly the realized proceeds");
+        settled = true;
+        uint256 toA;
+        if (realized > totalCapital) {
+            uint256 profit = realized - totalCapital;
+            toA = (totalCapital * capitalABps) / BPS + (profit * profitABps) / BPS;
+        } else {
+            // loss (or break-even): each bears it by capital share
+            toA = (realized * capitalABps) / BPS;
+        }
+        uint256 toB = realized - toA;
+        if (toA > 0) { (bool okA, ) = partnerA.call{value: toA}(""); require(okA, "to A"); }
+        if (toB > 0) { (bool okB, ) = partnerB.call{value: toB}(""); require(okB, "to B"); }
+        emit Settled(realized, toA, toB);
+    }
+"#;
+
+fn gen_musharakah_full_test(name: &str, cap_a: u64, profit_a: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Musharakah (full partnership). Proves profit splits by the profit ratio
+// and a loss is borne by capital share.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — musharakah", function () {{
+  let a, b, c;
+  const TOTAL = 1000000n, CAPA = {cap_a}n, PROFA = {profit_a}n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    [a, b] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(a).deploy(b.address, TOTAL, CAPA, PROFA);
+    await c.waitForDeployment();
+  }});
+
+  it("profit_by_ratio: profit over capital splits by the profit ratio", async function () {{
+    const realized = TOTAL + 200000n; // 200k profit
+    const profit = realized - TOTAL;
+    const toA = (TOTAL * CAPA) / BPS + (profit * PROFA) / BPS;
+    await expect(c.connect(a).settle(realized, {{ value: realized }})).to.emit(c, "Settled").withArgs(realized, toA, realized - toA);
+  }});
+
+  it("loss_by_capital: a shortfall is borne by capital share", async function () {{
+    const realized = TOTAL - 100000n; // a loss
+    const toA = (realized * CAPA) / BPS;
+    await expect(c.connect(a).settle(realized, {{ value: realized }})).to.emit(c, "Settled").withArgs(realized, toA, realized - toA);
+  }});
+
+  it("only partner A operates settlement", async function () {{
+    await expect(c.connect(b).settle(TOTAL, {{ value: TOTAL }})).to.be.revertedWith("only partner A");
+  }});
+}});
+"#,
+        name = name,
+        cap_a = cap_a,
+        profit_a = profit_a,
+    )
+}
+
+fn musharakah_full_descriptor(name: &str, cap_a: u64, profit_a: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "musharakah",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "partner",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256","uint256"],
+  "constructorArgs": ["@partner", 1000000, {cap_a}, {profit_a}],
+  "accounts": ["partner"],
+  "lifecycle": [
+    {{ "as": "partner", "fn": "settle", "args": [1200000], "value": 1200000, "note": "distribute realized proceeds: profit by ratio, loss by capital" }}
+  ],
+  "reads": ["settled"]
+}}
+"#,
+        name = name,
+        cap_a = cap_a,
+        profit_a = profit_a,
+    )
+}
+
+// =====================================================================================
+// Muzara'ah (sharecropping). splitCrop() shares the ACTUAL harvest by the agreed ratio — zero
+// output means zero to each (the owner shares the crop's fate; no fixed rent). No oracle.
+// =====================================================================================
+
+fn muzaraah_owner_bps(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "harvest_share")
+        .and_then(|r| kv_get(&r.kvs, "landowner"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(5000)
+}
+
+fn gen_muzaraah(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let owner_bps = muzaraah_owner_bps(spec);
+    let mut s = provenance_doc(spec, &format!("{} — muzara'ah (sharecropping) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(MUZARAAH_BODY);
+    s.push_str("}\n");
+    let test_js = gen_muzaraah_test(&name, owner_bps);
+    let descriptor = muzaraah_descriptor(&name, owner_bps);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const MUZARAAH_BODY: &str = r#"    address public immutable landowner;
+    address public immutable cultivator;
+    uint256 public immutable ownerBps; // landowner's share of the OUTPUT
+    uint256 public constant BPS = 10000;
+
+    bool public split;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyLandowner() { require(msg.sender == landowner, "only landowner"); _; }
+
+    event CropSplit(uint256 output, uint256 toOwner, uint256 toCultivator);
+
+    constructor(address _cultivator, uint256 _ownerBps) {
+        require(_cultivator != address(0), "zero addr");
+        require(_cultivator != msg.sender, "landowner and cultivator must be distinct");
+        require(_ownerBps > 0 && _ownerBps < BPS, "share");
+        landowner = msg.sender; cultivator = _cultivator; ownerBps = _ownerBps;
+    }
+
+    /// @dev INVARIANT output_by_ratio: the ACTUAL harvest is shared by the agreed ratio.
+    ///      INVARIANT no_fixed_rent: a zero harvest yields zero to each — the owner shares the risk;
+    ///      there is no path where the owner takes a fixed amount regardless of the output.
+    function splitCrop(uint256 output) external payable onlyLandowner nonReentrant {
+        require(!split, "already split");
+        require(msg.value == output, "send exactly the realized output");
+        split = true;
+        uint256 toOwner = (output * ownerBps) / BPS;
+        uint256 toCultivator = output - toOwner;
+        if (toOwner > 0) { (bool okO, ) = landowner.call{value: toOwner}(""); require(okO, "to owner"); }
+        if (toCultivator > 0) { (bool okC, ) = cultivator.call{value: toCultivator}(""); require(okC, "to cultivator"); }
+        emit CropSplit(output, toOwner, toCultivator);
+    }
+"#;
+
+fn gen_muzaraah_test(name: &str, owner_bps: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Muzara'ah (sharecropping). Proves the harvest is shared by ratio and a
+// zero harvest yields zero to each (no fixed rent — the owner shares the crop's fate).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — muzara'ah", function () {{
+  let owner, cultivator, c;
+  const OWNER_BPS = {owner_bps}n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    [owner, cultivator] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(owner).deploy(cultivator.address, OWNER_BPS);
+    await c.waitForDeployment();
+  }});
+
+  it("output_by_ratio: the harvest is shared by the agreed ratio", async function () {{
+    const output = 1000000n;
+    const toOwner = (output * OWNER_BPS) / BPS;
+    await expect(c.connect(owner).splitCrop(output, {{ value: output }})).to.emit(c, "CropSplit").withArgs(output, toOwner, output - toOwner);
+  }});
+
+  it("no_fixed_rent: a zero harvest yields zero to the owner (he shares the crop's fate)", async function () {{
+    await expect(c.connect(owner).splitCrop(0n, {{ value: 0n }})).to.emit(c, "CropSplit").withArgs(0n, 0n, 0n);
+  }});
+
+  it("only the landowner operates the split", async function () {{
+    await expect(c.connect(cultivator).splitCrop(1000n, {{ value: 1000n }})).to.be.revertedWith("only landowner");
+  }});
+}});
+"#,
+        name = name,
+        owner_bps = owner_bps,
+    )
+}
+
+fn muzaraah_descriptor(name: &str, owner_bps: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "muzaraah",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "landowner",
+  "oracle": null,
+  "constructorAbi": ["address","uint256"],
+  "constructorArgs": ["@cultivator", {owner_bps}],
+  "accounts": ["cultivator"],
+  "lifecycle": [
+    {{ "as": "landowner", "fn": "splitCrop", "args": [1000000], "value": 1000000, "note": "share the actual harvest by the agreed ratio" }}
+  ],
+  "reads": ["split"]
+}}
+"#,
+        name = name,
+        owner_bps = owner_bps,
     )
 }
 

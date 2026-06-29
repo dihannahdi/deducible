@@ -1,0 +1,34 @@
+// NEGATIVE CONTROL — sharecropping bent into a guaranteed land-rent. Two faults:
+//   (1) basis: fixed_quantity — a fixed quantity to the owner guarantees him against the risk -> MUZARA-1.
+//   (2) fixed_rent: 5000 — a fixed rent on the land regardless of harvest (the forbidden form) -> MUZARA-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument MuzaraahRiba : muzaraah {
+  meta {
+    basis: "a fixed-rent land lease dressed as muzara'ah";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    owner  : landowner;
+    farmer : cultivator;
+  }
+
+  returns {
+    harvest_share {
+      landowner:  6000 bps;
+      cultivator: 4000 bps;
+      basis:      fixed_quantity;  // MUZARA-1: not a ratio of the actual output
+      fixed_rent: 5000;            // MUZARA-2: a fixed rent regardless of harvest
+    }
+  }
+
+  invariant output_by_ratio { harvest_share.basis == output_ratio }
+  invariant no_fixed_rent   { harvest_share.fixed_rent == none }
+
+  lifecycle {
+    sow;
+    harvest;
+    splitCrop;
+  }
+}

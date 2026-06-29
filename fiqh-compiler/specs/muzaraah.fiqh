@@ -1,0 +1,33 @@
+// Muzara'ah (sharecropping). The landowner provides the land, the cultivator the labour; the
+// OUTPUT is shared by a known ratio of the actual harvest. A fixed rent on the land regardless of
+// the harvest is the forbidden form — the owner must share the crop's fate. Citations [scholar-verify].
+
+instrument Muzaraah : muzaraah {
+  meta {
+    basis: "muzara'ah: the Prophet dealt with Khaybar for a share of its produce (Bukhari/Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    owner  : landowner;
+    farmer : cultivator;
+  }
+
+  returns {
+    harvest_share {
+      landowner:  6000 bps;     // share of the OUTPUT
+      cultivator: 4000 bps;
+      basis:      output_ratio; // shared as a ratio of the actual harvest
+      fixed_rent: none;         // no fixed rent on the land regardless of harvest
+    }
+  }
+
+  invariant output_by_ratio { harvest_share.basis == output_ratio }
+  invariant no_fixed_rent   { harvest_share.fixed_rent == none }
+
+  lifecycle {
+    sow;        // cultivator works the owner's land
+    harvest;    // the crop is realized
+    splitCrop;  // output shared by the agreed ratio
+  }
+}

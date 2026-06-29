@@ -1,0 +1,45 @@
+// NEGATIVE CONTROL — a "partnership" that is really a guaranteed loan. Two faults:
+//   (1) capital_guarantee: partnerA — a partner's capital is guaranteed -> RIBA-1.
+//   (2) loss: equal — loss split equally rather than by capital share -> RISK-1.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument MusharakahRiba : musharakah {
+  meta {
+    basis: "a guaranteed-capital, equal-loss partnership";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    partnerA : partner;
+    partnerB : partner;
+  }
+
+  capital {
+    partnerA : 6000 bps;
+    partnerB : 4000 bps;
+    require partnerA + partnerB == 10000 bps;
+  }
+
+  returns {
+    profit {
+      split: ratio;
+      partnerA: 5000 bps;
+      partnerB: 5000 bps;
+    }
+  }
+
+  risk {
+    loss: equal;                  // RISK-1: not proportional_to_capital
+    capital_guarantee: partnerA;  // RIBA-1: a partner's capital is guaranteed
+  }
+
+  invariant profit_by_ratio      { profit.split == ratio }
+  invariant loss_by_capital      { loss == proportional_to_capital }
+  invariant no_capital_guarantee { capital_guarantee == none }
+
+  lifecycle {
+    fund;
+    reportProfit;
+    distribute;
+  }
+}

@@ -22,6 +22,8 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_MUSHARAKAH: &str = "mushārakah (sharikat al-ʿaqd): AAOIFI Shari'ah Standard No. 12; profit is shared by a pre-agreed RATIO (which may differ from the capital ratio), but loss is borne STRICTLY in proportion to capital — 'al-ribḥ ʿala mā shtaraṭā wa-l-waḍīʿa ʿala qadr al-māl' (athar of ʿAli, by ijmaʿ for the loss rule); no partner guarantees another's capital [scholar-verify]";
+const C_MUZARA: &str = "muzāraʿa (sharecropping): the Prophet ﷺ engaged the people of Khaybar for a SHARE of what the land produced of fruit or crop (Sahih al-Bukhari, Sahih Muslim); the yield is shared by a known ratio of the ACTUAL output — a fixed quantity to either party, or a fixed rent on the land regardless of the harvest, is the forbidden form (it guarantees one party against the other's risk) [scholar-verify]";
 const C_JUALA: &str = "juʿala (reward for a result): Yusuf 12:72 ('and for him who produces it is a camel-load, and I am responsible for it'); AAOIFI Shari'ah Standard No. 15; the reward (juʿl) must be known (maʿlūm), and it is due only on COMPLETION of the specified result — the worker (ʿamil) bears the risk of non-completion [scholar-verify]";
 const C_ARIYAH: &str = "ʿariyya (gratuitous loan of usufruct): a tabarruʿ — the Prophet ﷺ borrowed armour from Ṣafwan as an ʿariyya (Sunan Abi Dawud); it is FREE of charge (a charge would make it ijara), and the SAME asset is returned, since only its usufruct was lent, not its substance [scholar-verify]";
 const C_WAKALA: &str = "wakala (agency): AAOIFI Shari'ah Standard No. 23; the agent (wakil) acts on the principal's account and is a trustee (amīn) — he does NOT guarantee the capital or the profit (a guarantee by the agent converts the agency into a guaranteed loan, i.e. riba); his compensation is a KNOWN fee (ujra), free of gharar. In wakala bi-l-istithmar the realized return belongs to the principal [scholar-verify]";
@@ -91,6 +93,8 @@ pub enum Class {
     Ijarah,
     Juala,
     Ariyah,
+    Musharakah,
+    Muzaraah,
     CommercialEscrow,
     Unknown(String),
 }
@@ -115,6 +119,8 @@ impl Class {
             "ijarah" => Class::Ijarah,
             "juala" => Class::Juala,
             "ariyah" => Class::Ariyah,
+            "musharakah" => Class::Musharakah,
+            "muzaraah" => Class::Muzaraah,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -204,6 +210,8 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Ijarah => check_ijarah_plain(spec, &mut d),
         Class::Juala => check_juala(spec, &mut d),
         Class::Ariyah => check_ariyah(spec, &mut d),
+        Class::Musharakah => check_musharakah_full(spec, &mut d),
+        Class::Muzaraah => check_muzaraah(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1535,6 +1543,82 @@ fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
+}
+
+// --- Musharakah (full partnership, sharikat al-'aqd) ---
+//
+// Two or more partners pool capital; profit is shared by a pre-agreed RATIO (which may differ from
+// the capital ratio), but loss is borne STRICTLY in proportion to capital (MUSH/RISK), and no
+// partner guarantees another's capital (RIBA-1).
+fn check_musharakah_full(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    // RIBA-1: no guaranteed capital.
+    match risk_get(spec, "capital_guarantee") {
+        Some(e) if e.as_ident() == Some("none") => {}
+        Some(e) => d.push(Diagnostic::error("RIBA-1", spec.span, format!("capital is guaranteed to '{}'; no partner may guarantee another's capital (riba)", e.render()), C_MUSHARAKAH)),
+        None => d.push(Diagnostic::error("RIBA-1", spec.span, "a musharakah must declare risk { capital_guarantee: none }", C_MUSHARAKAH)),
+    }
+    // RISK-1: loss strictly by capital share.
+    match risk_get(spec, "loss") {
+        Some(e) if e.as_ident() == Some("proportional_to_capital") => {}
+        Some(e) => d.push(Diagnostic::error("RISK-1", spec.span, format!("loss allocation is '{}'; in musharakah loss is borne STRICTLY in proportion to capital (al-waḍīʿa ʿala qadr al-māl)", e.render()), C_MUSHARAKAH)),
+        None => d.push(Diagnostic::error("RISK-1", spec.span, "a musharakah must declare risk { loss: proportional_to_capital }", C_MUSHARAKAH)),
+    }
+    // profit by a pre-agreed ratio, never a fixed sum.
+    match find_return(spec, "profit") {
+        None => d.push(Diagnostic::error("PROFIT-2", spec.span, "musharakah requires a profit return shared by ratio", C_MUSHARAKAH)),
+        Some(p) => match kv_get(&p.kvs, "split") {
+            Some(e) if e.as_ident() == Some("ratio") => {}
+            _ => d.push(Diagnostic::error("PROFIT-1", p.span, "profit must be split by a pre-agreed ratio (split: ratio); a fixed guaranteed sum to a partner is riba", C_MUSHARAKAH)),
+        },
+    }
+    require_invariants(spec, &["profit_by_ratio", "loss_by_capital", "no_capital_guarantee"], d);
+    check_capital_sum(spec, d, true);
+}
+
+// --- Muzara'ah (sharecropping) ---
+//
+// The landowner provides land, the cultivator the labour; the OUTPUT is shared by a known ratio of
+// the actual harvest (MUZARA-1). A fixed rent on the land regardless of the harvest is the
+// forbidden form (MUZARA-2) — the owner must share the crop's fate.
+fn check_muzaraah(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let owner = role_party(spec, "landowner").map(|p| p.name.clone());
+    let worker = role_party(spec, "cultivator").map(|p| p.name.clone());
+    if owner.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "muzāraʿa requires a party with role 'landowner'", C_MUZARA));
+    }
+    if worker.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "muzāraʿa requires a party with role 'cultivator'", C_MUZARA));
+    }
+    if let (Some(o), Some(w)) = (&owner, &worker) {
+        if o == w {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "landowner and cultivator must be distinct parties", C_MUZARA));
+        }
+    }
+
+    match find_return(spec, "harvest_share") {
+        None => d.push(Diagnostic::error("MUZARA-1", spec.span, "muzāraʿa requires returns { harvest_share { landowner; cultivator; basis; fixed_rent } }", C_MUZARA)),
+        Some(h) => {
+            // MUZARA-1: shared by a ratio of the actual output.
+            match kv_get(&h.kvs, "basis").and_then(|e| e.as_ident()) {
+                Some("output_ratio") => {}
+                Some(other) => d.push(Diagnostic::error("MUZARA-1", h.span, format!("harvest basis is '{}'; muzāraʿa shares the ACTUAL output by ratio — a fixed quantity to a party guarantees it against the other's risk", other), C_MUZARA)),
+                None => d.push(Diagnostic::error("MUZARA-1", h.span, "muzāraʿa must declare basis: output_ratio", C_MUZARA)),
+            }
+            // MUZARA-2: no fixed rent on the land regardless of harvest.
+            match kv_get(&h.kvs, "fixed_rent").and_then(|e| e.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("MUZARA-2", h.span, format!("fixed_rent is '{}'; a fixed rent on the land regardless of the harvest is the forbidden form — the owner must share the crop's fate", other), C_MUZARA)),
+                None => d.push(Diagnostic::error("MUZARA-2", h.span, "muzāraʿa must declare fixed_rent: none", C_MUZARA)),
+            }
+            // the two shares must total 10000 bps.
+            let sum: u64 = h.kvs.iter().filter_map(|kv| if kv.key == "landowner" || kv.key == "cultivator" { kv.val.as_num() } else { None }).sum();
+            if sum != 10_000 {
+                d.push(Diagnostic::error("MUZARA-1", h.span, format!("the harvest shares sum to {} bps; they must total 10000 bps", sum), C_MUZARA));
+            }
+        }
+    }
+
+    require_invariants(spec, &["output_by_ratio", "no_fixed_rent"], d);
 }
 
 // --- Ju'ala (reward for a result) ---
