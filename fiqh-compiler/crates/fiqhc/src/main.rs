@@ -1,19 +1,19 @@
-//! `fiqhc` command-line interface.
+//! `deducible` command-line interface.
 
 use fiqhc::sema::{Diagnostic, Severity};
 use std::process::exit;
 
 fn usage() -> ! {
     eprintln!(
-        "fiqhc — a compliance-by-construction compiler for Islamic-finance contracts\n\
+        "deducible — a compliance-by-construction compiler for Islamic-finance contracts\n\
          \n\
          usage:\n\
-         \x20 fiqhc parse <file.fiqh>          parse and dump the AST\n\
-         \x20 fiqhc check <file.fiqh>          run the fiqh invariant engine (no codegen)\n\
-         \x20 fiqhc build <file.fiqh> [opts]   check, then emit code (--target solidity|manifest|zk|all)\n\
-         \x20 fiqhc nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
-         \x20 fiqhc lsp                        run the Language Server (stdio JSON-RPC, for editors)\n\
-         \x20 fiqhc fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n"
+         \x20 deducible parse <file.fiqh>          parse and dump the AST\n\
+         \x20 deducible check <file.fiqh>          run the fiqh invariant engine (no codegen)\n\
+         \x20 deducible build <file.fiqh> [opts]   check, then emit code (--target solidity|manifest|zk|all)\n\
+         \x20 deducible nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
+         \x20 deducible lsp                        run the Language Server (stdio JSON-RPC, for editors)\n\
+         \x20 deducible fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n"
     );
     exit(2);
 }
@@ -22,7 +22,7 @@ fn read(path: &str) -> String {
     match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("fiqhc: cannot read {}: {}", path, e);
+            eprintln!("deducible: cannot read {}: {}", path, e);
             exit(2);
         }
     }
@@ -124,7 +124,7 @@ fn main() {
                         (fiqhc::sema::check_with_ruleset(&spec, &rs), Some(label))
                     }
                     Err(e) => {
-                        eprintln!("fiqhc: {}", e);
+                        eprintln!("deducible: {}", e);
                         exit(2);
                     }
                 },
@@ -215,7 +215,7 @@ fn main() {
             let want_manifest = target == "manifest" || target == "all";
             let want_zk = target == "zk" || target == "all";
             if !want_sol && !want_manifest && !want_zk {
-                eprintln!("fiqhc: unknown --target '{}' (use solidity | manifest | zk | all)", target);
+                eprintln!("deducible: unknown --target '{}' (use solidity | manifest | zk | all)", target);
                 exit(2);
             }
             let mut emitted: Vec<String> = Vec::new();
@@ -283,7 +283,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("fiqhc nl: {}", e);
+                    eprintln!("deducible nl: {}", e);
                     exit(1);
                 }
             }
@@ -307,7 +307,7 @@ fn write_out(root: &str, rel: &str, content: &str) -> String {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(e) = std::fs::write(&p, content) {
-        eprintln!("fiqhc: cannot write {}: {}", p, e);
+        eprintln!("deducible: cannot write {}: {}", p, e);
         exit(1);
     }
     p

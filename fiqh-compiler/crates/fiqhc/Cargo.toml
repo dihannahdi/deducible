@@ -2,7 +2,7 @@
 name = "fiqhc"
 version = "0.1.0"
 edition = "2021"
-description = "fiqhc — a compliance-by-construction compiler for Islamic-finance contracts"
+description = "deducible — a compliance-by-construction compiler for Islamic-finance contracts"
 license = "MIT"
 
 [dependencies]
@@ -13,5 +13,5 @@ name = "fiqhc"
 path = "src/lib.rs"
 
 [[bin]]
-name = "fiqhc"
+name = "deducible"
 path = "src/main.rs"
