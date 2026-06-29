@@ -31,6 +31,8 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::QardHasan => gen_qard(spec),
         Class::Rahn => gen_rahn(spec),
         Class::Kafala => gen_kafala(spec),
+        Class::Hawala => gen_hawala(spec),
+        Class::Wadia => gen_wadia(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -103,6 +105,13 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("KAFALA-1", "returns.guarantee.fee", "eq", json!("none"), "no fee for a guarantee (the majority); AAOIFI SS 5 [scholar-verify]");
             add("KAFALA-2", "returns.guarantee.recourse", "eq", json!("actual_paid"), "recourse for exactly what was paid, no surcharge [scholar-verify]");
         }
+        Class::Hawala => {
+            add("HAWALA-2", "returns.transfer.discharge", "eq", json!("original_debtor"), "a valid hawala discharges the original debtor [scholar-verify]");
+        }
+        Class::Wadia => {
+            add("WADIA-1", "returns.deposit.liability", "eq", json!("amanah"), "the deposit is a trust, not guaranteed (else a loan); al-Nisa 4:58 [scholar-verify]");
+            add("WADIA-2", "returns.deposit.custodian_use", "eq", json!("none"), "the custodian must not use the deposit [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -126,6 +135,8 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::QardHasan => vec!["lender", "borrower"],
         Class::Rahn => vec!["pledgor", "pledgee"],
         Class::Kafala => vec!["kafil", "principal_debtor", "creditor"],
+        Class::Hawala => vec!["muhil", "muhal", "muhal_alayh"],
+        Class::Wadia => vec!["depositor", "custodian"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -2730,6 +2741,272 @@ fn kafala_descriptor(name: &str, amount: u64) -> String {
     {{ "as": "principal_debtor", "fn": "recover", "value": {amount}, "note": "debtor reimburses exactly what was paid" }}
   ],
   "reads": ["paid","recovered"]
+}}
+"#,
+        name = name,
+        amount = amount,
+    )
+}
+
+// =====================================================================================
+// Hawala (debt transfer). Acceptance discharges the original debtor; the new payer (muhal alayh)
+// then settles the creditor for EXACTLY the debt — no increase. No oracle.
+// =====================================================================================
+
+fn transfer_debt(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "transfer")
+        .and_then(|r| kv_get(&r.kvs, "debt"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_hawala(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let debt = transfer_debt(spec);
+    let mut s = provenance_doc(spec, &format!("{} — hawala (assignment of debt) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(HAWALA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_hawala_test(&name, debt);
+    let descriptor = hawala_descriptor(&name, debt);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const HAWALA_BODY: &str = r#"    address public immutable muhil;       // original debtor
+    address public immutable muhal;       // creditor
+    address public immutable muhalAlayh;  // the new payer
+    uint256 public immutable debt;        // transferred for the LIKE amount — no increase
+
+    bool public accepted;
+    bool public muhilDischarged;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyMuhal() { require(msg.sender == muhal, "only creditor"); _; }
+    modifier onlyMuhalAlayh() { require(msg.sender == muhalAlayh, "only the new payer"); _; }
+
+    event HawalaAccepted();
+    event MuhilDischarged();
+    event Settled(uint256 amount);
+
+    constructor(address _muhal, address _muhalAlayh, uint256 _debt) {
+        require(_muhal != address(0) && _muhalAlayh != address(0), "zero addr");
+        require(_debt > 0, "debt");
+        muhil = msg.sender; muhal = _muhal; muhalAlayh = _muhalAlayh; debt = _debt;
+    }
+
+    /// @dev INVARIANT debtor_discharged: on acceptance the ORIGINAL debtor (muhil) is discharged;
+    ///      the creditor's recourse moves to the new payer.
+    function acceptHawala() external onlyMuhal {
+        require(!accepted, "already accepted");
+        accepted = true; muhilDischarged = true;
+        emit HawalaAccepted(); emit MuhilDischarged();
+    }
+
+    /// @dev INVARIANT equal_transfer: the new payer settles the creditor for EXACTLY the debt —
+    ///      no increase (an increase would be a riba-bearing sale of debt).
+    function settle() external payable onlyMuhalAlayh nonReentrant {
+        require(accepted, "not accepted");
+        require(!settled, "already settled");
+        require(msg.value == debt, "settle exactly the debt, no increase");
+        settled = true;
+        (bool ok, ) = muhal.call{value: debt}(""); require(ok, "to creditor");
+        emit Settled(debt);
+    }
+"#;
+
+fn gen_hawala_test(name: &str, debt: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Hawala (assignment of debt). Proves acceptance discharges the original
+// debtor and the new payer settles the creditor for EXACTLY the debt (no increase).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — hawala", function () {{
+  let muhil, muhal, muhalAlayh, c;
+  const DEBT = {debt}n;
+
+  beforeEach(async function () {{
+    [muhil, muhal, muhalAlayh] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(muhil).deploy(muhal.address, muhalAlayh.address, DEBT);
+    await c.waitForDeployment();
+  }});
+
+  it("debtor_discharged: acceptance discharges the original debtor", async function () {{
+    await expect(c.connect(muhal).acceptHawala()).to.emit(c, "MuhilDischarged");
+    expect(await c.muhilDischarged()).to.equal(true);
+  }});
+
+  it("equal_transfer: the new payer settles for EXACTLY the debt; an increase is rejected", async function () {{
+    await c.connect(muhal).acceptHawala();
+    await expect(c.connect(muhalAlayh).settle({{ value: DEBT + 1n }})).to.be.revertedWith("settle exactly the debt, no increase");
+    await expect(c.connect(muhalAlayh).settle({{ value: DEBT }})).to.emit(c, "Settled").withArgs(DEBT);
+  }});
+
+  it("only the creditor accepts; only the new payer settles", async function () {{
+    await expect(c.connect(muhil).acceptHawala()).to.be.revertedWith("only creditor");
+  }});
+}});
+"#,
+        name = name,
+        debt = debt,
+    )
+}
+
+fn hawala_descriptor(name: &str, debt: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "hawala",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "muhil",
+  "oracle": null,
+  "constructorAbi": ["address","address","uint256"],
+  "constructorArgs": ["@muhal", "@muhal_alayh", {debt}],
+  "accounts": ["muhal","muhal_alayh"],
+  "lifecycle": [
+    {{ "as": "muhal", "fn": "acceptHawala", "note": "creditor accepts; original debtor discharged" }},
+    {{ "as": "muhal_alayh", "fn": "settle", "value": {debt}, "note": "the new payer settles the creditor for exactly the debt" }}
+  ],
+  "reads": ["accepted","muhilDischarged","settled"]
+}}
+"#,
+        name = name,
+        debt = debt,
+    )
+}
+
+// =====================================================================================
+// Wadia (safekeeping). The deposit is escrowed in a neutral vault and returned to the depositor on
+// demand, intact. The custodian has NO function to move it (it is amana, not used). No oracle.
+// =====================================================================================
+
+fn deposit_amount(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "deposit")
+        .and_then(|r| kv_get(&r.kvs, "amount"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_wadia(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let amount = deposit_amount(spec);
+    let mut s = provenance_doc(spec, &format!("{} — wadia (safekeeping deposit, held as amana) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(WADIA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_wadia_test(&name, amount);
+    let descriptor = wadia_descriptor(&name, amount);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const WADIA_BODY: &str = r#"    address public immutable depositor;  // al-mudi'
+    address public immutable custodian;  // al-mustawda' (custody of record; cannot move the funds)
+    uint256 public immutable amount;
+
+    bool public deposited;
+    bool public withdrawn;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyDepositor() { require(msg.sender == depositor, "only depositor"); _; }
+
+    event Deposited(uint256 amount);
+    event Withdrawn(uint256 amount);
+
+    constructor(address _custodian, uint256 _amount) {
+        require(_custodian != address(0), "zero addr");
+        require(_custodian != msg.sender, "depositor and custodian must be distinct");
+        require(_amount > 0, "amount");
+        depositor = msg.sender; custodian = _custodian; amount = _amount;
+    }
+
+    /// @dev INVARIANT no_custodian_use: the deposit is escrowed here as amana; there is NO function
+    ///      by which the custodian can move or use it.
+    function deposit() external payable onlyDepositor {
+        require(!deposited, "already deposited");
+        require(msg.value == amount, "deposit exactly the agreed amount");
+        deposited = true; emit Deposited(amount);
+    }
+
+    /// @dev INVARIANT held_as_amanah: the depositor withdraws the deposit on demand, intact.
+    function withdraw() external onlyDepositor nonReentrant {
+        require(deposited && !withdrawn, "nothing to withdraw");
+        withdrawn = true;
+        (bool ok, ) = depositor.call{value: amount}(""); require(ok, "return to depositor");
+        emit Withdrawn(amount);
+    }
+"#;
+
+fn gen_wadia_test(name: &str, amount: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Wadia (safekeeping). Proves the deposit is held as amana: returned to the
+// depositor on demand intact, and the custodian has no power to move it.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — wadia", function () {{
+  let depositor, custodian, c;
+  const AMOUNT = {amount}n;
+
+  beforeEach(async function () {{
+    [depositor, custodian] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(depositor).deploy(custodian.address, AMOUNT);
+    await c.waitForDeployment();
+  }});
+
+  it("held_as_amanah: the depositor withdraws the deposit on demand, intact", async function () {{
+    await c.connect(depositor).deposit({{ value: AMOUNT }});
+    await expect(c.connect(depositor).withdraw()).to.emit(c, "Withdrawn").withArgs(AMOUNT);
+    expect(await c.withdrawn()).to.equal(true);
+  }});
+
+  it("no_custodian_use: the custodian has no power to move the deposit", async function () {{
+    await c.connect(depositor).deposit({{ value: AMOUNT }});
+    await expect(c.connect(custodian).withdraw()).to.be.revertedWith("only depositor");
+  }});
+}});
+"#,
+        name = name,
+        amount = amount,
+    )
+}
+
+fn wadia_descriptor(name: &str, amount: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "wadia",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "depositor",
+  "oracle": null,
+  "constructorAbi": ["address","uint256"],
+  "constructorArgs": ["@custodian", {amount}],
+  "accounts": ["custodian"],
+  "lifecycle": [
+    {{ "as": "depositor", "fn": "deposit", "value": {amount}, "note": "depositor places the property for safekeeping" }},
+    {{ "as": "depositor", "fn": "withdraw", "note": "depositor withdraws it on demand, intact" }}
+  ],
+  "reads": ["deposited","withdrawn"]
 }}
 "#,
         name = name,

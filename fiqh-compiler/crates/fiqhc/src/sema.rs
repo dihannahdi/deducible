@@ -22,6 +22,8 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_WADIA: &str = "wadiʿa (safekeeping deposit): al-Nisaʾ 4:58 ('render the trusts to their owners') and al-Baqarah 2:283; the deposit is a trust (yad amāna) — the custodian is NOT liable for its loss absent taʿaddī (transgression) or taqṣīr (negligence), and may not use it. If the custodian guarantees its return regardless, or uses it, the contract becomes a loan (qarḍ) and any conditioned benefit is riba. A fee for the safekeeping SERVICE itself is permitted (wadiʿa bi-l-ujra) [scholar-verify]";
+const C_HAWALA: &str = "hawala (assignment/transfer of debt): the Prophet ﷺ — 'procrastination by a rich man is injustice; and when one of you is referred to a solvent man, let him follow/accept' (Sahih al-Bukhari, Sahih Muslim). The transfer is for the LIKE of the debt — no increase (an increase would be riba / sale of debt) — and a valid hawala DISCHARGES the original debtor (al-muhil) toward the creditor [scholar-verify]";
 const C_KAFALA: &str = "kafala / ḍamān (suretyship): AAOIFI Shari'ah Standard No. 5; the guarantee is a gratuitous undertaking (tabarruʿ) — the majority forbid taking a FEE for a guarantee, since it is a benefit on lending one's credit and a paid guarantee can mask riba; 'al-zaʿīm ghārim' — the guarantor is liable (Sunan Abi Dawud, al-Tirmidhi, ḥasan). On paying, the guarantor has recourse to the debtor for exactly what he paid, no surcharge [scholar-verify]";
 const C_RAHN: &str = "rahn (pledge / collateral): al-Baqarah 2:283 (a pledge taken in hand); the Prophet ﷺ pledged his armour to a Jew of Madina for barley (Sahih al-Bukhari, Sahih Muslim). The pledge secures the debt but the creditor takes NO benefit from it (the majority: a benefit to the creditor is riba on the loan), and on default the surplus over the debt returns to the pledgor — the pledge is not forfeit (lā yaghlaqu al-rahn). Held as amāna in the creditor's hand (majority; the Ḥanafīs hold it guaranteed up to the debt) [scholar-verify]";
 const C_QARD: &str = "qarḍ ḥasan (benevolent loan): al-Ḥadid 57:11 and al-Baqarah 2:245 (lending Allah a goodly loan); the loan is repaid in like WITHOUT any stipulated increase or benefit to the lender — 'every loan that draws a benefit is riba' (a well-known maxim; the marfūʿ wording is weak, but the prohibition of a stipulated increase is by ijmaʿ). An unstipulated gift (hadiyya) at repayment is permitted [scholar-verify]";
@@ -80,6 +82,8 @@ pub enum Class {
     QardHasan,
     Rahn,
     Kafala,
+    Hawala,
+    Wadia,
     CommercialEscrow,
     Unknown(String),
 }
@@ -98,6 +102,8 @@ impl Class {
             "qard_hasan" => Class::QardHasan,
             "rahn" => Class::Rahn,
             "kafala" => Class::Kafala,
+            "hawala" => Class::Hawala,
+            "wadia" => Class::Wadia,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -181,6 +187,8 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::QardHasan => check_qard(spec, &mut d),
         Class::Rahn => check_rahn(spec, &mut d),
         Class::Kafala => check_kafala(spec, &mut d),
+        Class::Hawala => check_hawala(spec, &mut d),
+        Class::Wadia => check_wadia(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1374,6 +1382,96 @@ fn check_kafala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_guarantee_fee", "recourse_actual"], d);
+}
+
+// --- Hawala (assignment / transfer of debt) ---
+//
+// The original debtor (muhil) refers his creditor (muhal) to a third party (muhal ʿalayh) who
+// owes the muhil. On acceptance the original debtor is DISCHARGED (HAWALA-2). The transfer is for
+// the LIKE of the debt — no increase (HAWALA-1), else it is a riba-bearing sale of debt.
+fn check_hawala(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    for (role, who) in [("muhil", "original debtor"), ("muhal", "creditor"), ("muhal_alayh", "the new payer")] {
+        if role_party(spec, role).is_none() {
+            d.push(Diagnostic::error("PARTY-1", spec.span, format!("hawala requires a party with role '{}' ({})", role, who), C_HAWALA));
+        }
+    }
+
+    match find_return(spec, "transfer") {
+        None => d.push(Diagnostic::error(
+            "HAWALA-1",
+            spec.span,
+            "hawala requires returns { transfer { debt; amount; discharge } }",
+            C_HAWALA,
+        )),
+        Some(t) => {
+            // HAWALA-1: the transferred amount equals the debt — no increase.
+            let debt = ret_kv(t, "debt").and_then(|kv| kv.val.as_num());
+            let amount = ret_kv(t, "amount").and_then(|kv| kv.val.as_num());
+            match (debt, amount) {
+                (Some(dv), Some(av)) if dv == av && dv > 0 => {}
+                (Some(dv), Some(av)) => d.push(Diagnostic::error("HAWALA-1", t.span, format!("the transferred amount ({}) does not equal the debt ({}); a hawala transfers the LIKE of the debt — any increase is riba / sale of debt", av, dv), C_HAWALA)),
+                _ => d.push(Diagnostic::error("HAWALA-1", t.span, "hawala must declare a positive debt and an equal transfer amount", C_HAWALA)),
+            }
+            // HAWALA-2: a valid hawala discharges the original debtor.
+            match ret_kv(t, "discharge").and_then(|kv| kv.val.as_ident()) {
+                Some("original_debtor") => {}
+                Some(other) => d.push(Diagnostic::error("HAWALA-2", t.span, format!("discharge is '{}'; a valid hawala discharges the ORIGINAL debtor (al-muhil) toward the creditor", other), C_HAWALA)),
+                None => d.push(Diagnostic::error("HAWALA-2", t.span, "hawala must declare discharge: original_debtor", C_HAWALA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["equal_transfer", "debtor_discharged"], d);
+}
+
+// --- Wadia (safekeeping deposit) ---
+//
+// The deposit is a trust (yad amāna): the custodian is not liable for its loss absent taʿaddī or
+// taqṣīr (WADIA-1 — declaring it 'guaranteed' would turn it into a loan), and may not use it
+// (WADIA-2). A fee for the safekeeping service is permitted and is not policed here.
+fn check_wadia(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let depositor = role_party(spec, "depositor").map(|p| p.name.clone());
+    let custodian = role_party(spec, "custodian").map(|p| p.name.clone());
+    if depositor.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wadiʿa requires a party with role 'depositor' (al-mudiʿ)", C_WADIA));
+    }
+    if custodian.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wadiʿa requires a party with role 'custodian' (al-mustawdaʿ)", C_WADIA));
+    }
+    if let (Some(a), Some(b)) = (&depositor, &custodian) {
+        if a == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "depositor and custodian must be distinct parties", C_WADIA));
+        }
+    }
+
+    match find_return(spec, "deposit") {
+        None => d.push(Diagnostic::error(
+            "WADIA-1",
+            spec.span,
+            "wadiʿa requires returns { deposit { amount; liability; custodian_use } }",
+            C_WADIA,
+        )),
+        Some(dep) => {
+            // WADIA-1: held as amāna (a trust), not guaranteed — else it becomes a loan (qarḍ).
+            match ret_kv(dep, "liability").and_then(|kv| kv.val.as_ident()) {
+                Some("amanah") => {}
+                Some(other) => d.push(Diagnostic::error("WADIA-1", dep.span, format!("liability is '{}'; a deposit is held as amāna (trust) — guaranteeing its return turns it into a loan (qarḍ), and a conditioned benefit then becomes riba", other), C_WADIA)),
+                None => d.push(Diagnostic::error("WADIA-1", dep.span, "wadiʿa must declare liability: amanah (a trust, not guaranteed)", C_WADIA)),
+            }
+            // WADIA-2: the custodian must not use the deposit.
+            match ret_kv(dep, "custodian_use").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("WADIA-2", dep.span, format!("custodian_use is '{}'; the custodian must not use the deposit (using it is taʿaddī and, if arranged, makes it a loan)", other), C_WADIA)),
+                None => d.push(Diagnostic::error("WADIA-2", dep.span, "wadiʿa must declare custodian_use: none", C_WADIA)),
+            }
+            match ret_kv(dep, "amount").and_then(|kv| kv.val.as_num()) {
+                Some(n) if n > 0 => {}
+                _ => d.push(Diagnostic::error("WADIA-1", dep.span, "wadiʿa must declare a positive deposit amount", C_WADIA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["held_as_amanah", "no_custodian_use"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

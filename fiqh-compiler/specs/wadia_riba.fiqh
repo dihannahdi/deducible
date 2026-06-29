@@ -1,0 +1,34 @@
+// NEGATIVE CONTROL — a "deposit" that has become an interest-bearing loan. Two faults:
+//   (1) liability: guaranteed — the custodian guarantees the return regardless, which turns the
+//       deposit into a loan (qard) -> WADIA-1.
+//   (2) custodian_use: invest — the custodian uses the deposit; combined with a guaranteed return
+//       this is precisely an interest-bearing deposit -> WADIA-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument WadiaRiba : wadia {
+  meta {
+    basis: "a guaranteed, invested deposit — an interest account dressed as wadia";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    depositor : depositor;
+    custodian : custodian;
+  }
+
+  returns {
+    deposit {
+      amount:        1000000;
+      liability:     guaranteed;  // WADIA-1: guaranteeing return turns it into a loan
+      custodian_use: invest;      // WADIA-2: the custodian uses the deposit
+    }
+  }
+
+  invariant held_as_amanah   { deposit.liability == amanah }
+  invariant no_custodian_use { deposit.custodian_use == none }
+
+  lifecycle {
+    deposit;
+    withdraw;
+  }
+}

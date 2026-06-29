@@ -1,0 +1,33 @@
+// Wadia (safekeeping deposit). The depositor (al-mudi') entrusts property to the custodian
+// (al-mustawda'). The deposit is a trust (yad amana): the custodian is not liable for its loss
+// absent ta'addi or taqsir, and may not use it. Declaring it 'guaranteed' or using it turns the
+// contract into a loan (qard), at which point any conditioned benefit is riba. A fee for the
+// safekeeping service is permitted (not modelled here). Citations [scholar-verify].
+
+instrument Wadia : wadia {
+  meta {
+    basis: "wadia: al-Nisa 4:58 (render trusts to their owners); al-Baqarah 2:283";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    depositor : depositor;     // al-mudi'
+    custodian : custodian;     // al-mustawda'
+  }
+
+  returns {
+    deposit {
+      amount:        1000000;
+      liability:     amanah;   // a trust — not guaranteed (else it becomes a loan)
+      custodian_use: none;     // the custodian must not use the deposit
+    }
+  }
+
+  invariant held_as_amanah   { deposit.liability == amanah }
+  invariant no_custodian_use { deposit.custodian_use == none }
+
+  lifecycle {
+    deposit;    // depositor places the property for safekeeping
+    withdraw;   // depositor withdraws it on demand, intact
+  }
+}

@@ -1,0 +1,33 @@
+// NEGATIVE CONTROL — a debt transfer that charges more than the debt. Fault:
+//   transfer amount 1100000 > debt 1000000 — the assignee pays an increase over the debt, which is
+//   a riba-bearing sale of debt -> HAWALA-1.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument HawalaRiba : hawala {
+  meta {
+    basis: "a debt transfer carrying an increase";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    transferor : muhil;
+    creditor   : muhal;
+    payer      : muhal_alayh;
+  }
+
+  returns {
+    transfer {
+      debt:      1000000;
+      amount:    1100000;          // HAWALA-1: an increase over the debt = riba / sale of debt
+      discharge: original_debtor;
+    }
+  }
+
+  invariant equal_transfer    { transfer.amount == debt }
+  invariant debtor_discharged { transfer.discharge == original_debtor }
+
+  lifecycle {
+    acceptHawala;
+    settle;
+  }
+}

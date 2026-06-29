@@ -1,0 +1,33 @@
+// Hawala (assignment / transfer of debt). The original debtor (muhil) refers his creditor (muhal)
+// to a third party (muhal alayh) who owes the muhil. On acceptance the original debtor is
+// discharged. The transfer is for the LIKE of the debt — no increase (an increase would be a
+// riba-bearing sale of debt). Citations [scholar-verify].
+
+instrument Hawala : hawala {
+  meta {
+    basis: "hawala: 'when one of you is referred to a solvent man, let him follow' (Bukhari/Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    transferor : muhil;       // original debtor
+    creditor   : muhal;       // the creditor
+    payer      : muhal_alayh; // the party who owes the muhil and now pays the creditor
+  }
+
+  returns {
+    transfer {
+      debt:      1000000;          // the original debt
+      amount:    1000000;          // the transferred amount — equals the debt (no increase)
+      discharge: original_debtor;  // a valid hawala discharges the muhil
+    }
+  }
+
+  invariant equal_transfer    { transfer.amount == debt }
+  invariant debtor_discharged { transfer.discharge == original_debtor }
+
+  lifecycle {
+    acceptHawala;   // the creditor accepts -> original debtor discharged
+    settle;         // the new payer settles the creditor for exactly the debt
+  }
+}
