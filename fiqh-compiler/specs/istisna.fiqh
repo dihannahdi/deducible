@@ -1,0 +1,40 @@
+// Istisna' (manufacture-to-order). The customer (al-mustasni') commissions a good to be MADE to a
+// known specification; the maker (al-sani') supplies the materials AND the labour. It is held
+// permissible by istihsan and distinguished from its neighbours: unlike salam, the price may be
+// deferred or paid in progress instalments; unlike ijarat al-'amal, the maker furnishes the
+// materials (if the customer did, it would be mere hire of labour). The masnu' must be described
+// to spec, or it is gharar. Citations [scholar-verify].
+
+instrument Istisna : istisna {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 11 (Istisna' and Parallel Istisna')";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    customer     : buyer;         // al-mustasni' — orders the made-to-order good
+    manufacturer : manufacturer;  // al-sani' — supplies materials AND labour, builds to spec
+  }
+
+  returns {
+    istisna {
+      price:         1000000;      // a known, fixed total price
+      payment:       instalment;   // MAY be deferred / progress payments (unlike salam) — permitted
+      spec:          described;    // the masnu' is described to spec (ma'lum) — anti-gharar
+      quantity:      10;
+      material_by:   manufacturer; // the sani' provides the materials (else ijarat al-'amal)
+      delivery_date: 180;          // a known delivery term
+    }
+  }
+
+  invariant object_specified  { istisna.spec == described }
+  invariant material_by_maker { istisna.material_by == manufacturer }
+  invariant price_known       { istisna.price != 0 }
+
+  lifecycle {
+    commission;     // the customer commissions the made-to-order good
+    manufacture;    // the sani' builds to spec (materials + labour)
+    deliver;        // delivers the masnu'
+    payInstalment;  // price paid (may be progressive / deferred)
+  }
+}

@@ -1,0 +1,39 @@
+// NEGATIVE CONTROL — an "istisna'" that has slipped its bounds. Two faults:
+//   (1) material_by: customer — the customer supplies the materials, so this is really ijarat
+//       al-'amal (hire of labour), not istisna' → ISTISNA-2.
+//   (2) the masnu' has no spec — an undescribed made-to-order good is gharar → ISTISNA-1.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument IstisnaGharar : istisna {
+  meta {
+    basis: "an ijarat al-'amal mislabelled as istisna', with an undescribed object";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    customer     : buyer;
+    manufacturer : manufacturer;
+  }
+
+  returns {
+    istisna {
+      price:         1000000;
+      payment:       instalment;
+      quantity:      10;
+      material_by:   customer;   // ISTISNA-2: customer supplies materials => ijarat al-'amal
+      delivery_date: 180;
+      // ISTISNA-1: no `spec` declared — the masnu' is undescribed (gharar)
+    }
+  }
+
+  invariant object_specified  { istisna.material_by == manufacturer }
+  invariant material_by_maker { istisna.material_by == manufacturer }
+  invariant price_known       { istisna.price != 0 }
+
+  lifecycle {
+    commission;
+    manufacture;
+    deliver;
+    payInstalment;
+  }
+}

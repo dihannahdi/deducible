@@ -20,6 +20,7 @@ const C_MUDARABAH: &str = "AAOIFI Shari'ah Standard No. 13 (Mudarabah) [scholar-
 const C_IJARAH: &str = "AAOIFI Shari'ah Standard No. 9 (Ijarah) [scholar-verify]";
 const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI Shari'ah Standard No. 8; the buyer must know the true cost; the seller must possess the good first — 'do not sell what you do not have' (Hakim b. Hizam — Sunan Abi Dawud, al-Tirmidhi, al-Nasa'i); al-Baqarah 2:275 (Allah permitted trade and forbade riba) [scholar-verify]";
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
+const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,7 @@ pub enum Class {
     IjarahImbt,
     Murabahah,
     Salam,
+    Istisna,
     CommercialEscrow,
     Unknown(String),
 }
@@ -80,6 +82,7 @@ impl Class {
             "ijarah_imbt" => Class::IjarahImbt,
             "murabahah" => Class::Murabahah,
             "salam" => Class::Salam,
+            "istisna" => Class::Istisna,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -156,6 +159,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         }
         Class::Murabahah => check_murabahah(spec, &mut d),
         Class::Salam => check_salam(spec, &mut d),
+        Class::Istisna => check_istisna(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -920,6 +924,70 @@ fn check_salam(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["full_prepayment", "object_known", "delivery_known"], d);
+}
+
+// --- Istisna' (manufacture-to-order) ---
+//
+// Istisnaʿ commissions a good that does not yet exist — to be MADE to a known specification.
+// It is distinguished from salam (the price may be deferred) and from ijarat al-ʿamal (the
+// maker, al-saniʿ, supplies the materials, not just labour). The engine guards the gharar:
+// the masnuʿ must be described, the maker must furnish the materials, the price must be known.
+fn check_istisna(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let buyer = role_party(spec, "buyer").map(|p| p.name.clone());
+    let maker = role_party(spec, "manufacturer").map(|p| p.name.clone());
+    if buyer.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "an istisnaʿ requires a party with role 'buyer' (al-mustasniʿ, who commissions the good)", C_ISTISNA));
+    }
+    if maker.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "an istisnaʿ requires a party with role 'manufacturer' (al-saniʿ, who builds to spec)", C_ISTISNA));
+    }
+    if let (Some(b), Some(m)) = (&buyer, &maker) {
+        if b == m {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "buyer and manufacturer must be distinct parties", C_ISTISNA));
+        }
+    }
+
+    match find_return(spec, "istisna") {
+        None => d.push(Diagnostic::error(
+            "ISTISNA-1",
+            spec.span,
+            "an istisnaʿ requires returns { istisna { price; spec; quantity; material_by; delivery_date } }",
+            C_ISTISNA,
+        )),
+        Some(s) => {
+            // ISTISNA-1: the masnuʿ must be DESCRIBED (spec) and of a known quantity — anti-gharar.
+            if ret_kv(s, "spec").and_then(|kv| kv.val.as_ident()).is_none() {
+                d.push(Diagnostic::error("ISTISNA-1", s.span, "istisnaʿ must describe the masnuʿ (spec: described) — an undescribed made-to-order good is gharar", C_ISTISNA));
+            }
+            match ret_kv(s, "quantity") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error("ISTISNA-1", s.span, "istisnaʿ must declare a known, positive quantity of the masnuʿ", C_ISTISNA)),
+            }
+            // ISTISNA-2: the maker supplies the materials — else it is ijarat al-ʿamal (hire of labour).
+            match ret_kv(s, "material_by") {
+                Some(kv) if kv.val.as_ident() == Some("manufacturer") => {}
+                Some(kv) => d.push(Diagnostic::error(
+                    "ISTISNA-2",
+                    kv.span,
+                    format!("material_by is '{}'; in istisnaʿ the maker (al-saniʿ) supplies the materials — if the customer supplies them this is ijarat al-ʿamal (hire of labour), a different contract", kv.val.render()),
+                    C_ISTISNA,
+                )),
+                None => d.push(Diagnostic::error("ISTISNA-2", s.span, "istisnaʿ must declare material_by: manufacturer (the maker supplies the materials)", C_ISTISNA)),
+            }
+            // ISTISNA-3: a known, fixed price (it may be deferred — that is allowed, unlike salam).
+            match ret_kv(s, "price") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error("ISTISNA-3", s.span, "istisnaʿ must declare a known, positive total price", C_ISTISNA)),
+            }
+            // delivery term should be known (ajal maʿlūm) — a contemporary requirement (AAOIFI).
+            match ret_kv(s, "delivery_date") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::warn("ISTISNA-4", s.span, "istisnaʿ should declare a known delivery_date (a defined term — AAOIFI SS 11)", C_ISTISNA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["object_specified", "material_by_maker", "price_known"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

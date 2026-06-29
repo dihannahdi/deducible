@@ -25,6 +25,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::IjarahImbt => gen_ijarah(spec),
         Class::Murabahah => gen_murabahah(spec),
         Class::Salam => gen_salam(spec),
+        Class::Istisna => gen_istisna(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -72,6 +73,11 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("SALAM-2", "returns.salam.quantity", "gt", json!(0), "the muslam fih must be a known quantity (maʿlūm); Bukhari/Muslim, Ibn ʿAbbas [scholar-verify]");
             add("SALAM-3", "returns.salam.delivery_date", "gt", json!(0), "delivery at a known term (ajal maʿlūm) [scholar-verify]");
         }
+        Class::Istisna => {
+            add("ISTISNA-1", "returns.istisna.spec", "eq", json!("described"), "the masnuʿ must be described (maʿlūm); AAOIFI SS 11 [scholar-verify]");
+            add("ISTISNA-2", "returns.istisna.material_by", "eq", json!("manufacturer"), "the saniʿ supplies the materials, else ijarat al-ʿamal; AAOIFI SS 11 [scholar-verify]");
+            add("ISTISNA-3", "returns.istisna.price", "gt", json!(0), "a known fixed price [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -89,6 +95,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::IjarahImbt => vec!["lessor", "lessee"],
         Class::Murabahah => vec!["seller", "buyer"],
         Class::Salam => vec!["buyer", "seller"],
+        Class::Istisna => vec!["buyer", "manufacturer"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -1711,6 +1718,176 @@ fn salam_descriptor(name: &str, price: u64, quantity: u64, delivery: u64) -> Str
         price = price,
         quantity = quantity,
         delivery = delivery,
+    )
+}
+
+// =====================================================================================
+// Istisna' (manufacture-to-order). The customer commissions a good to be MADE to spec; the
+// maker (al-sani') supplies materials + labour. Unlike salam, the price may be paid in
+// progress instalments. No oracle (the price is fixed at contract).
+// =====================================================================================
+
+fn istisna_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "istisna")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_istisna(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let price = istisna_field(spec, "price");
+    let mut s = provenance_doc(spec, &format!("{} — istisna' (manufacture-to-order) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(ISTISNA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_istisna_test(&name, price);
+    let descriptor = istisna_descriptor(&name, price);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const ISTISNA_BODY: &str = r#"    address public immutable customer;     // al-mustasni'
+    address public immutable manufacturer; // al-sani' (supplies materials + labour)
+    uint256 public immutable price;        // a known, fixed total price
+
+    bool public commissioned;
+    bool public manufactured;
+    bool public delivered;
+    uint256 public paid;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyCustomer() { require(msg.sender == customer, "only customer"); _; }
+    modifier onlyManufacturer() { require(msg.sender == manufacturer, "only manufacturer"); _; }
+
+    event Commissioned();
+    event Manufactured();
+    event Delivered();
+    event InstalmentPaid(uint256 amount, uint256 paid, uint256 price);
+    event Settled();
+
+    /// @dev INVARIANT price_known: price > 0.
+    constructor(address _manufacturer, uint256 _price) {
+        require(_manufacturer != address(0), "zero addr");
+        require(_manufacturer != msg.sender, "customer and manufacturer must be distinct");
+        require(_price > 0, "price must be known");
+        customer = msg.sender; manufacturer = _manufacturer; price = _price;
+    }
+
+    function commission() external onlyCustomer {
+        require(!commissioned, "already commissioned");
+        commissioned = true; emit Commissioned();
+    }
+
+    /// @dev INVARIANT material_by_maker: the sani' builds with its OWN materials (else ijarat al-'amal).
+    function manufacture() external onlyManufacturer {
+        require(commissioned, "not commissioned");
+        require(!manufactured, "already manufactured");
+        manufactured = true; emit Manufactured();
+    }
+
+    function deliver() external onlyManufacturer {
+        require(manufactured, "not yet manufactured");
+        require(!delivered, "already delivered");
+        delivered = true; emit Delivered();
+        if (paid == price) { settled = true; emit Settled(); }
+    }
+
+    /// @dev unlike salam, the price MAY be paid in progress instalments — never above the fixed total.
+    function payInstalment() external payable onlyCustomer nonReentrant {
+        require(commissioned, "not commissioned");
+        require(!settled, "already settled");
+        require(msg.value > 0, "no payment");
+        require(paid + msg.value <= price, "would exceed the fixed price");
+        paid += msg.value;
+        (bool ok, ) = manufacturer.call{value: msg.value}(""); require(ok, "forward to manufacturer failed");
+        emit InstalmentPaid(msg.value, paid, price);
+        if (paid == price && delivered) { settled = true; emit Settled(); }
+    }
+"#;
+
+fn gen_istisna_test(name: &str, price: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Istisna' (manufacture-to-order). Proves a made-to-spec sale: the maker
+// supplies materials + labour, the price may be paid in progress instalments (unlike salam), and
+// the customer can never be charged above the fixed total.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — istisna' manufacture-to-order", function () {{
+  let customer, manufacturer, c;
+  const PRICE = {price}n;
+
+  beforeEach(async function () {{
+    [customer, manufacturer] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(customer).deploy(manufacturer.address, PRICE);
+    await c.waitForDeployment();
+  }});
+
+  it("price_known is fixed at contract", async function () {{
+    expect(await c.price()).to.equal(PRICE);
+  }});
+
+  it("cannot manufacture before the good is commissioned", async function () {{
+    await expect(c.connect(manufacturer).manufacture()).to.be.revertedWith("not commissioned");
+  }});
+
+  it("full lifecycle with PROGRESS instalments: commission -> pay half -> manufacture -> deliver -> pay rest -> settle", async function () {{
+    await c.connect(customer).commission();
+    await c.connect(customer).payInstalment({{ value: PRICE / 2n }});
+    await c.connect(manufacturer).manufacture();
+    await c.connect(manufacturer).deliver();
+    await expect(c.connect(customer).payInstalment({{ value: PRICE - PRICE / 2n }})).to.emit(c, "Settled");
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("the customer can never be charged above the fixed price", async function () {{
+    await c.connect(customer).commission();
+    await expect(c.connect(customer).payInstalment({{ value: PRICE + 1n }})).to.be.revertedWith("would exceed the fixed price");
+  }});
+
+  it("only the manufacturer manufactures; only the customer commissions", async function () {{
+    await expect(c.connect(manufacturer).commission()).to.be.revertedWith("only customer");
+  }});
+}});
+"#,
+        name = name,
+        price = price,
+    )
+}
+
+fn istisna_descriptor(name: &str, price: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "istisna",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "customer",
+  "oracle": null,
+  "constructorAbi": ["address","uint256"],
+  "constructorArgs": ["@manufacturer", {price}],
+  "accounts": ["manufacturer"],
+  "lifecycle": [
+    {{ "as": "customer", "fn": "commission", "note": "customer commissions the made-to-order good" }},
+    {{ "as": "manufacturer", "fn": "manufacture", "note": "the sani' builds to spec with its own materials" }},
+    {{ "as": "manufacturer", "fn": "deliver", "note": "delivers the masnu'" }},
+    {{ "as": "customer", "fn": "payInstalment", "value": {price}, "note": "price paid (may be progressive)" }}
+  ],
+  "reads": ["price","paid","settled"]
+}}
+"#,
+        name = name,
+        price = price,
     )
 }
 
