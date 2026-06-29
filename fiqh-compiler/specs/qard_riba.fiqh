@@ -1,0 +1,33 @@
+// NEGATIVE CONTROL — a "benevolent loan" that has grown teeth. Two faults:
+//   (1) stipulated_increase: 50000 — a stipulated increase over the principal is riba -> QARD-1.
+//   (2) fee: 10000 — a fee conditioned on the loan draws a benefit to the lender -> QARD-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument QardRiba : qard_hasan {
+  meta {
+    basis: "an interest-bearing loan dressed as qard hasan";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lender   : lender;
+    borrower : borrower;
+  }
+
+  returns {
+    loan {
+      principal:           1000000;
+      repayment:           principal;
+      stipulated_increase: 50000;   // QARD-1: a stipulated increase = riba
+      fee:                 10000;   // QARD-2: a fee conditioned on the loan = riba
+    }
+  }
+
+  invariant no_increase { loan.repayment == principal }
+  invariant no_fee      { loan.fee == none }
+
+  lifecycle {
+    disburse;
+    repay;
+  }
+}

@@ -28,6 +28,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Istisna => gen_istisna(spec),
         Class::Sarf => gen_sarf(spec),
         Class::Tawarruq => gen_tawarruq(spec),
+        Class::QardHasan => gen_qard(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -88,6 +89,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("TAWARRUQ-1", "returns.spot_sale.buyer", "ne", json!("financier"), "the onward sale must go to a third party, not back to the seller (else bayʿ al-ʿīnah) [scholar-verify]");
             add("TAWARRUQ-3", "returns.spot_sale.arranged_by", "ne", json!("financier"), "organized tawarruq (arranged by the financier) is forbidden — OIC Fiqh Academy Res. 179 (19/5) [scholar-verify]");
         }
+        Class::QardHasan => {
+            add("QARD-1", "returns.loan.stipulated_increase", "eq", json!("none"), "no stipulated increase; every loan that draws a benefit is riba [scholar-verify]");
+            add("QARD-2", "returns.loan.fee", "eq", json!("none"), "no fee/benefit conditioned on the loan (riba) [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -108,6 +113,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Istisna => vec!["buyer", "manufacturer"],
         Class::Sarf => vec!["exchanger_a", "exchanger_b"],
         Class::Tawarruq => vec!["mustawriq", "financier", "third_party"],
+        Class::QardHasan => vec!["lender", "borrower"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -2287,6 +2293,143 @@ fn tawarruq_descriptor(name: &str, credit: u64, spot: u64) -> String {
         name = name,
         credit = credit,
         spot = spot,
+    )
+}
+
+// =====================================================================================
+// Qard Hasan (benevolent loan). Disburse the principal; the borrower repays EXACTLY the principal.
+// The contract refuses any repayment above the principal — no stipulated increase, no fee. No oracle.
+// =====================================================================================
+
+fn loan_principal(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "loan")
+        .and_then(|r| kv_get(&r.kvs, "principal"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_qard(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let principal = loan_principal(spec);
+    let mut s = provenance_doc(spec, &format!("{} — qard hasan (benevolent loan, repaid in like) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(QARD_BODY);
+    s.push_str("}\n");
+    let test_js = gen_qard_test(&name, principal);
+    let descriptor = qard_descriptor(&name, principal);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const QARD_BODY: &str = r#"    address public immutable lender;
+    address public immutable borrower;
+    uint256 public immutable principal;  // repaid IN LIKE — never more
+
+    bool public disbursed;
+    bool public repaid;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyLender() { require(msg.sender == lender, "only lender"); _; }
+    modifier onlyBorrower() { require(msg.sender == borrower, "only borrower"); _; }
+
+    event Disbursed(uint256 amount);
+    event Repaid(uint256 amount);
+
+    constructor(address _borrower, uint256 _principal) {
+        require(_borrower != address(0), "zero addr");
+        require(_borrower != msg.sender, "lender and borrower must be distinct");
+        require(_principal > 0, "principal");
+        lender = msg.sender; borrower = _borrower; principal = _principal;
+    }
+
+    function disburse() external payable onlyLender nonReentrant {
+        require(!disbursed, "already disbursed");
+        require(msg.value == principal, "must disburse exactly the principal");
+        disbursed = true;
+        (bool ok, ) = borrower.call{value: principal}(""); require(ok, "to borrower");
+        emit Disbursed(principal);
+    }
+
+    /// @dev INVARIANT no_increase: the borrower repays EXACTLY the principal — the contract rejects
+    ///      any increase. INVARIANT no_fee: there is no fee path. 'Every loan that draws a benefit
+    ///      is riba'. (An unstipulated gift would be a separate, voluntary transfer.)
+    function repay() external payable onlyBorrower nonReentrant {
+        require(disbursed, "not disbursed");
+        require(!repaid, "already repaid");
+        require(msg.value == principal, "qard hasan: repay exactly the principal, no increase");
+        repaid = true;
+        (bool ok, ) = lender.call{value: principal}(""); require(ok, "to lender");
+        emit Repaid(principal);
+    }
+"#;
+
+fn gen_qard_test(name: &str, principal: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Qard Hasan (benevolent loan). Proves the loan is repaid in like: the
+// contract accepts EXACTLY the principal and rejects any increase (riba).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — qard hasan", function () {{
+  let lender, borrower, c;
+  const PRINCIPAL = {principal}n;
+
+  beforeEach(async function () {{
+    [lender, borrower] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(lender).deploy(borrower.address, PRINCIPAL);
+    await c.waitForDeployment();
+  }});
+
+  it("full lifecycle: disburse -> borrower repays exactly the principal", async function () {{
+    await c.connect(lender).disburse({{ value: PRINCIPAL }});
+    await expect(c.connect(borrower).repay({{ value: PRINCIPAL }})).to.emit(c, "Repaid").withArgs(PRINCIPAL);
+    expect(await c.repaid()).to.equal(true);
+  }});
+
+  it("no_increase: a repayment above the principal is rejected (riba)", async function () {{
+    await c.connect(lender).disburse({{ value: PRINCIPAL }});
+    await expect(c.connect(borrower).repay({{ value: PRINCIPAL + 1n }})).to.be.revertedWith("qard hasan: repay exactly the principal, no increase");
+  }});
+
+  it("only the borrower repays; only the lender disburses", async function () {{
+    await expect(c.connect(borrower).disburse({{ value: PRINCIPAL }})).to.be.revertedWith("only lender");
+  }});
+}});
+"#,
+        name = name,
+        principal = principal,
+    )
+}
+
+fn qard_descriptor(name: &str, principal: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "qard_hasan",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "lender",
+  "oracle": null,
+  "constructorAbi": ["address","uint256"],
+  "constructorArgs": ["@borrower", {principal}],
+  "accounts": ["borrower"],
+  "lifecycle": [
+    {{ "as": "lender", "fn": "disburse", "value": {principal}, "note": "lender disburses the principal" }},
+    {{ "as": "borrower", "fn": "repay", "value": {principal}, "note": "borrower repays exactly the principal — no increase" }}
+  ],
+  "reads": ["disbursed","repaid"]
+}}
+"#,
+        name = name,
+        principal = principal,
     )
 }
 

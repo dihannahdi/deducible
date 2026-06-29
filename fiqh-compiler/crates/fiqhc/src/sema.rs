@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_QARD: &str = "qarḍ ḥasan (benevolent loan): al-Ḥadid 57:11 and al-Baqarah 2:245 (lending Allah a goodly loan); the loan is repaid in like WITHOUT any stipulated increase or benefit to the lender — 'every loan that draws a benefit is riba' (a well-known maxim; the marfūʿ wording is weak, but the prohibition of a stipulated increase is by ijmaʿ). An unstipulated gift (hadiyya) at repayment is permitted [scholar-verify]";
 const C_TAWARRUQ: &str = "tawarruq: the individual (fardī/classical) form is permitted by the majority — buy a commodity on credit, take possession, then sell it to a THIRD party for spot cash; but selling back to the original seller is bayʿ al-ʿīnah, and ORGANIZED tawarruq (munaẓẓam, where the financier arranges the onward sale into a ring) was forbidden by the OIC International Islamic Fiqh Academy Resolution 179 (19/5), 2009 [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
@@ -74,6 +75,7 @@ pub enum Class {
     Istisna,
     Sarf,
     Tawarruq,
+    QardHasan,
     CommercialEscrow,
     Unknown(String),
 }
@@ -89,6 +91,7 @@ impl Class {
             "istisna" => Class::Istisna,
             "sarf" => Class::Sarf,
             "tawarruq" => Class::Tawarruq,
+            "qard_hasan" => Class::QardHasan,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -169,6 +172,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Istisna => check_istisna(spec, &mut d),
         Class::Sarf => check_sarf(spec, &mut d),
         Class::Tawarruq => check_tawarruq(spec, &mut d),
+        Class::QardHasan => check_qard(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1203,6 +1207,63 @@ fn check_tawarruq(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["onward_to_third_party", "possession_before_resale", "not_organized"], d);
+}
+
+// --- Qard Hasan (benevolent loan) ---
+//
+// The one pure-credit contract: the lender disburses, the borrower repays IN LIKE, and that is
+// all. Any stipulated increase, or any fee/benefit conditioned on the loan, is riba — "kullu
+// qarḍin jarra nafʿan fa-huwa riba". (An unstipulated gift at repayment is licit; the engine only
+// forbids what is conditioned.) The borrower owns and is liable for the sum (it is ḍamān, not amana).
+fn check_qard(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let lender = role_party(spec, "lender").map(|p| p.name.clone());
+    let borrower = role_party(spec, "borrower").map(|p| p.name.clone());
+    if lender.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "qarḍ ḥasan requires a party with role 'lender'", C_QARD));
+    }
+    if borrower.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "qarḍ ḥasan requires a party with role 'borrower'", C_QARD));
+    }
+    if let (Some(l), Some(b)) = (&lender, &borrower) {
+        if l == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "lender and borrower must be distinct parties", C_QARD));
+        }
+    }
+
+    match find_return(spec, "loan") {
+        None => d.push(Diagnostic::error(
+            "QARD-1",
+            spec.span,
+            "qarḍ ḥasan requires returns { loan { principal; repayment; stipulated_increase; fee } }",
+            C_QARD,
+        )),
+        Some(loan) => {
+            // QARD-1: no stipulated increase — repayment is the principal, in like, no more.
+            let repay_ok = ret_kv(loan, "repayment").and_then(|kv| kv.val.as_ident()) == Some("principal");
+            let inc = ret_kv(loan, "stipulated_increase").and_then(|kv| kv.val.as_ident());
+            if !repay_ok {
+                d.push(Diagnostic::error("QARD-1", loan.span, "qarḍ ḥasan must declare repayment: principal — the loan is repaid in like, with no increase (any stipulated increase is riba)", C_QARD));
+            }
+            match inc {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("QARD-1", loan.span, format!("stipulated_increase is '{}'; any increase conditioned on the loan is riba", other), C_QARD)),
+                None => d.push(Diagnostic::error("QARD-1", loan.span, "qarḍ ḥasan must declare stipulated_increase: none", C_QARD)),
+            }
+            // QARD-2: no fee/benefit conditioned on the loan (a service fee that exceeds real cost is riba).
+            match ret_kv(loan, "fee").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("QARD-2", loan.span, format!("a fee '{}' is tied to the loan; 'every loan that draws a benefit is riba'", other), C_QARD)),
+                None => d.push(Diagnostic::error("QARD-2", loan.span, "qarḍ ḥasan must declare fee: none (no benefit conditioned on the loan)", C_QARD)),
+            }
+            // principal must be a definite positive sum.
+            match ret_kv(loan, "principal").and_then(|kv| kv.val.as_num()) {
+                Some(n) if n > 0 => {}
+                _ => d.push(Diagnostic::error("QARD-1", loan.span, "qarḍ ḥasan must declare a positive principal", C_QARD)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["no_increase", "no_fee"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

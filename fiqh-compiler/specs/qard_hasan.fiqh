@@ -1,0 +1,33 @@
+// Qard Hasan (benevolent loan). The lender disburses a sum; the borrower repays IN LIKE — exactly
+// the principal, no more. Any stipulated increase, or any fee/benefit conditioned on the loan, is
+// riba ("every loan that draws a benefit is riba"). An unstipulated gift at repayment is licit and
+// is not modelled here. Citations [scholar-verify].
+
+instrument QardHasan : qard_hasan {
+  meta {
+    basis: "qard hasan: al-Hadid 57:11; al-Baqarah 2:245";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lender   : lender;
+    borrower : borrower;
+  }
+
+  returns {
+    loan {
+      principal:           1000000;
+      repayment:           principal;  // repaid in like — no increase
+      stipulated_increase: none;       // any stipulated increase is riba
+      fee:                 none;       // no fee/benefit conditioned on the loan
+    }
+  }
+
+  invariant no_increase { loan.repayment == principal }
+  invariant no_fee      { loan.fee == none }
+
+  lifecycle {
+    disburse;   // lender disburses the principal to the borrower
+    repay;      // borrower repays exactly the principal
+  }
+}
