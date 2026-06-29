@@ -1,0 +1,37 @@
+// Ijarah (plain operating lease). The lessor leases an asset to the lessee for rent that is the
+// price of the usufruct (manfa'a). The lessor (owner) bears the asset's risk, and no late-payment
+// penalty may accrue to the lessor as interest. Unlike ijarah_imbt, ownership is never transferred
+// — the asset returns to the lessor at the end. Citations [scholar-verify].
+
+instrument Ijarah : ijarah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 9 (Ijarah)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lessor : lessor;
+    lessee : lessee;
+  }
+
+  returns {
+    rent {
+      basis: usufruct;     // rent prices the usufruct, not principal
+      rate: 1000;          // rent per period
+      late_penalty: none;  // no penalty-riba on a late rent
+    }
+  }
+
+  risk {
+    loss: on_lessor;       // the owner bears the asset's risk
+  }
+
+  invariant rent_for_usufruct        { rent.basis == usufruct }
+  invariant lessor_bears_risk        { loss == on_lessor }
+  invariant no_late_penalty_interest { rent.late_penalty == none }
+
+  lifecycle {
+    payRent;       // lessee pays rent for the usufruct
+    returnAsset;   // at lease end, the asset returns to the lessor
+  }
+}

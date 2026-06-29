@@ -1,0 +1,38 @@
+// NEGATIVE CONTROL — a "lease" that is really an interest loan. Two faults:
+//   (1) rent basis: principal — rent charged on the principal is interest, not usufruct -> RIBA-2.
+//   (2) risk loss: on_lessee — the lessee bears the asset's risk, so the "lessor" carries no
+//       ownership burden; combined with rent-on-principal this is a financing, not a lease -> RISK-3.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument IjarahRibaPlain : ijarah {
+  meta {
+    basis: "an interest loan dressed as a lease";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lessor : lessor;
+    lessee : lessee;
+  }
+
+  returns {
+    rent {
+      basis: principal;       // RIBA-2: rent on principal = interest
+      rate: 1000;
+      late_penalty: surcharge; // RIBA-3 too: a penalty accruing to the lessor
+    }
+  }
+
+  risk {
+    loss: on_lessee;          // RISK-3: the lessee bears the asset risk
+  }
+
+  invariant rent_for_usufruct        { rent.basis == usufruct }
+  invariant lessor_bears_risk        { loss == on_lessor }
+  invariant no_late_penalty_interest { rent.late_penalty == none }
+
+  lifecycle {
+    payRent;
+    returnAsset;
+  }
+}

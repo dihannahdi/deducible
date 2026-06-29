@@ -86,6 +86,7 @@ pub enum Class {
     Hawala,
     Wadia,
     Wakala,
+    Ijarah,
     CommercialEscrow,
     Unknown(String),
 }
@@ -107,6 +108,7 @@ impl Class {
             "hawala" => Class::Hawala,
             "wadia" => Class::Wadia,
             "wakala" => Class::Wakala,
+            "ijarah" => Class::Ijarah,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -193,6 +195,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Hawala => check_hawala(spec, &mut d),
         Class::Wadia => check_wadia(spec, &mut d),
         Class::Wakala => check_wakala(spec, &mut d),
+        Class::Ijarah => check_ijarah_plain(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1524,6 +1527,54 @@ fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
+}
+
+// --- Ijarah (plain operating lease) ---
+//
+// A lease of usufruct (manfaʿa): rent is the price of the usufruct, the lessor (owner) bears the
+// asset's risk, and no late-payment penalty may accrue to the lessor as interest. Unlike IMBT,
+// there is NO transfer of ownership — the asset returns to the lessor at the end.
+fn check_ijarah_plain(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let lessor = role_party(spec, "lessor").map(|p| p.name.clone());
+    let lessee = role_party(spec, "lessee").map(|p| p.name.clone());
+    if lessor.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "ijarah requires a party with role 'lessor'", C_IJARAH));
+    }
+    if lessee.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "ijarah requires a party with role 'lessee'", C_IJARAH));
+    }
+    if let (Some(a), Some(b)) = (&lessor, &lessee) {
+        if a == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "lessor and lessee must be distinct parties", C_IJARAH));
+        }
+    }
+
+    // rent is for usufruct, never on principal.
+    match find_return(spec, "rent") {
+        None => d.push(Diagnostic::error("RENT-2", spec.span, "ijarah requires a rent return for the usufruct of the asset", C_IJARAH)),
+        Some(rent) => {
+            match ret_kv(rent, "basis").map(|kv| &kv.val) {
+                None => d.push(Diagnostic::error("RENT-1", rent.span, "rent block has no 'basis'", "")),
+                Some(b) if basis_is_principal(b) => d.push(Diagnostic::error("RIBA-2", rent.span, "rent is charged on principal/capital — ijarah rent is the price of usufruct, not interest on money", C_RIBA)),
+                Some(b) if b.as_ident() != Some("usufruct") => d.push(Diagnostic::warn("IJARAH-1", rent.span, format!("rent basis '{}' is not 'usufruct'", b.render()), C_IJARAH)),
+                Some(_) => {}
+            }
+            if let Some(p) = ret_kv(rent, "late_penalty") {
+                if p.val.as_ident() != Some("none") {
+                    d.push(Diagnostic::error("RIBA-3", rent.span, "a late-payment penalty accruing to the lessor is interest on a debt (riba); any charge must go to charity, not the lessor", C_RIBA));
+                }
+            }
+        }
+    }
+
+    // ownership risk rests on the lessor for the duration of the lease.
+    match risk_get(spec, "loss") {
+        Some(e) if e.as_ident() == Some("on_lessor") => {}
+        Some(e) => d.push(Diagnostic::error("RISK-3", spec.span, format!("ownership risk is '{}'; in ijarah the lessor (owner) bears the risk of the asset", e.render()), C_IJARAH)),
+        None => d.push(Diagnostic::error("RISK-3", spec.span, "ijarah must declare risk { loss: on_lessor }", C_IJARAH)),
+    }
+
+    require_invariants(spec, &["rent_for_usufruct", "lessor_bears_risk", "no_late_penalty_interest"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---
