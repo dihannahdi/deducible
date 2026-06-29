@@ -1,0 +1,32 @@
+// NEGATIVE CONTROL — an "investment agency" with a guaranteed return: the agent guarantees the
+// principal's capital/profit, which converts the agency into a guaranteed loan = riba -> WAKALA-1.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument WakalaRiba : wakala {
+  meta {
+    basis: "a guaranteed-return agency — a riba loan dressed as wakala";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    principal : muwakkil;
+    agent     : wakil;
+  }
+
+  returns {
+    agency {
+      capital:         1000000;
+      fee:             20000;
+      agent_guarantee: capital_and_profit;  // WAKALA-1: the agent guarantees a return = riba
+    }
+  }
+
+  invariant no_agent_guarantee { agency.agent_guarantee == none }
+  invariant fee_disclosed      { agency.fee != 0 }
+
+  lifecycle {
+    appoint;
+    invest;
+    settle;
+  }
+}

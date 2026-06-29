@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_WAKALA: &str = "wakala (agency): AAOIFI Shari'ah Standard No. 23; the agent (wakil) acts on the principal's account and is a trustee (amīn) — he does NOT guarantee the capital or the profit (a guarantee by the agent converts the agency into a guaranteed loan, i.e. riba); his compensation is a KNOWN fee (ujra), free of gharar. In wakala bi-l-istithmar the realized return belongs to the principal [scholar-verify]";
 const C_WADIA: &str = "wadiʿa (safekeeping deposit): al-Nisaʾ 4:58 ('render the trusts to their owners') and al-Baqarah 2:283; the deposit is a trust (yad amāna) — the custodian is NOT liable for its loss absent taʿaddī (transgression) or taqṣīr (negligence), and may not use it. If the custodian guarantees its return regardless, or uses it, the contract becomes a loan (qarḍ) and any conditioned benefit is riba. A fee for the safekeeping SERVICE itself is permitted (wadiʿa bi-l-ujra) [scholar-verify]";
 const C_HAWALA: &str = "hawala (assignment/transfer of debt): the Prophet ﷺ — 'procrastination by a rich man is injustice; and when one of you is referred to a solvent man, let him follow/accept' (Sahih al-Bukhari, Sahih Muslim). The transfer is for the LIKE of the debt — no increase (an increase would be riba / sale of debt) — and a valid hawala DISCHARGES the original debtor (al-muhil) toward the creditor [scholar-verify]";
 const C_KAFALA: &str = "kafala / ḍamān (suretyship): AAOIFI Shari'ah Standard No. 5; the guarantee is a gratuitous undertaking (tabarruʿ) — the majority forbid taking a FEE for a guarantee, since it is a benefit on lending one's credit and a paid guarantee can mask riba; 'al-zaʿīm ghārim' — the guarantor is liable (Sunan Abi Dawud, al-Tirmidhi, ḥasan). On paying, the guarantor has recourse to the debtor for exactly what he paid, no surcharge [scholar-verify]";
@@ -84,6 +85,7 @@ pub enum Class {
     Kafala,
     Hawala,
     Wadia,
+    Wakala,
     CommercialEscrow,
     Unknown(String),
 }
@@ -104,6 +106,7 @@ impl Class {
             "kafala" => Class::Kafala,
             "hawala" => Class::Hawala,
             "wadia" => Class::Wadia,
+            "wakala" => Class::Wakala,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -189,6 +192,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Kafala => check_kafala(spec, &mut d),
         Class::Hawala => check_hawala(spec, &mut d),
         Class::Wadia => check_wadia(spec, &mut d),
+        Class::Wakala => check_wakala(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1472,6 +1476,54 @@ fn check_wadia(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["held_as_amanah", "no_custodian_use"], d);
+}
+
+// --- Wakala (agency, incl. investment agency) ---
+//
+// The agent (wakil) acts on the principal's account for a KNOWN fee and is a trustee, not a
+// guarantor: he does not guarantee the capital or the profit (WAKALA-1 — a guarantee converts the
+// agency into a riba-bearing loan). The fee must be disclosed (WAKALA-2 — gharar-free).
+fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let principal = role_party(spec, "muwakkil").map(|p| p.name.clone());
+    let agent = role_party(spec, "wakil").map(|p| p.name.clone());
+    if principal.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wakala requires a party with role 'muwakkil' (the principal)", C_WAKALA));
+    }
+    if agent.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wakala requires a party with role 'wakil' (the agent)", C_WAKALA));
+    }
+    if let (Some(p), Some(a)) = (&principal, &agent) {
+        if p == a {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "principal and agent must be distinct parties", C_WAKALA));
+        }
+    }
+
+    match find_return(spec, "agency") {
+        None => d.push(Diagnostic::error(
+            "WAKALA-1",
+            spec.span,
+            "wakala requires returns { agency { capital; fee; agent_guarantee } }",
+            C_WAKALA,
+        )),
+        Some(ag) => {
+            // WAKALA-1: the agent guarantees neither capital nor profit.
+            match ret_kv(ag, "agent_guarantee").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("WAKALA-1", ag.span, format!("agent_guarantee is '{}'; the agent (wakil) does not guarantee the capital or profit — a guarantee converts the agency into a riba-bearing loan", other), C_WAKALA)),
+                None => d.push(Diagnostic::error("WAKALA-1", ag.span, "wakala must declare agent_guarantee: none", C_WAKALA)),
+            }
+            // WAKALA-2: the fee (ujra) must be DISCLOSED (a definite sum, possibly 0 for a gratuitous agency).
+            if ret_kv(ag, "fee").and_then(|kv| kv.val.as_num()).is_none() {
+                d.push(Diagnostic::error("WAKALA-2", ag.span, "wakala must declare a definite fee (ujra) — an undisclosed agency fee is gharar (use fee: 0 for a gratuitous agency)", C_WAKALA));
+            }
+            match ret_kv(ag, "capital").and_then(|kv| kv.val.as_num()) {
+                Some(n) if n > 0 => {}
+                _ => d.push(Diagnostic::error("WAKALA-1", ag.span, "wakala must declare a positive capital under management", C_WAKALA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

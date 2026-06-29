@@ -33,6 +33,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Kafala => gen_kafala(spec),
         Class::Hawala => gen_hawala(spec),
         Class::Wadia => gen_wadia(spec),
+        Class::Wakala => gen_wakala(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -112,6 +113,9 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("WADIA-1", "returns.deposit.liability", "eq", json!("amanah"), "the deposit is a trust, not guaranteed (else a loan); al-Nisa 4:58 [scholar-verify]");
             add("WADIA-2", "returns.deposit.custodian_use", "eq", json!("none"), "the custodian must not use the deposit [scholar-verify]");
         }
+        Class::Wakala => {
+            add("WAKALA-1", "returns.agency.agent_guarantee", "eq", json!("none"), "the agent does not guarantee capital or profit (else riba); AAOIFI SS 23 [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -137,6 +141,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Kafala => vec!["kafil", "principal_debtor", "creditor"],
         Class::Hawala => vec!["muhil", "muhal", "muhal_alayh"],
         Class::Wadia => vec!["depositor", "custodian"],
+        Class::Wakala => vec!["muwakkil", "wakil"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -3011,6 +3016,151 @@ fn wadia_descriptor(name: &str, amount: u64) -> String {
 "#,
         name = name,
         amount = amount,
+    )
+}
+
+// =====================================================================================
+// Wakala (agency / investment agency). The principal escrows capital + the known fee; the agent
+// acts, then settles — taking ONLY its fixed fee, returning the capital to the principal. There is
+// no guarantee path: the agent never tops up to ensure a return. No oracle.
+// =====================================================================================
+
+fn agency_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "agency")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_wakala(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let capital = agency_field(spec, "capital");
+    let fee = agency_field(spec, "fee");
+    let mut s = provenance_doc(spec, &format!("{} — wakala (agency for a known fee, no guarantee) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(WAKALA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_wakala_test(&name, capital, fee);
+    let descriptor = wakala_descriptor(&name, capital, fee);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const WAKALA_BODY: &str = r#"    address public immutable principal;  // al-muwakkil
+    address public immutable agent;      // al-wakil
+    uint256 public immutable capital;    // the amount under management (borne by the principal)
+    uint256 public immutable fee;        // the agent's KNOWN ujra
+
+    bool public appointed;
+    bool public invested;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyPrincipal() { require(msg.sender == principal, "only principal"); _; }
+    modifier onlyAgent() { require(msg.sender == agent, "only agent"); _; }
+
+    event Appointed(uint256 capital, uint256 fee);
+    event Invested();
+    event Settled(uint256 toAgentFee, uint256 toPrincipal);
+
+    constructor(address _agent, uint256 _capital, uint256 _fee) {
+        require(_agent != address(0), "zero addr");
+        require(_agent != msg.sender, "principal and agent must be distinct");
+        require(_capital > 0, "capital");
+        principal = msg.sender; agent = _agent; capital = _capital; fee = _fee;
+    }
+
+    function appoint() external payable onlyPrincipal {
+        require(!appointed, "already appointed");
+        require(msg.value == capital + fee, "fund the capital plus the agreed fee");
+        appointed = true; emit Appointed(capital, fee);
+    }
+
+    function invest() external onlyAgent {
+        require(appointed, "not appointed");
+        require(!invested, "already investing");
+        invested = true; emit Invested();
+    }
+
+    /// @dev INVARIANT no_agent_guarantee: the agent takes ONLY its fixed fee; there is no code path
+    ///      by which it guarantees the principal a profit or even the full capital. The realized
+    ///      return belongs to (and its risk is borne by) the principal.
+    function settle() external onlyAgent nonReentrant {
+        require(invested && !settled, "not settleable");
+        settled = true;
+        if (fee > 0) { (bool okF, ) = agent.call{value: fee}(""); require(okF, "fee to agent"); }
+        (bool okP, ) = principal.call{value: capital}(""); require(okP, "capital to principal");
+        emit Settled(fee, capital);
+    }
+"#;
+
+fn gen_wakala_test(name: &str, capital: u64, fee: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Wakala (agency). Proves the agent takes only its known fee and never
+// guarantees a return (there is no guarantee code path).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — wakala", function () {{
+  let principal, agent, c;
+  const CAPITAL = {capital}n, FEE = {fee}n;
+
+  beforeEach(async function () {{
+    [principal, agent] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(principal).deploy(agent.address, CAPITAL, FEE);
+    await c.waitForDeployment();
+  }});
+
+  it("lifecycle: appoint -> invest -> settle; the agent takes only its known fee", async function () {{
+    await c.connect(principal).appoint({{ value: CAPITAL + FEE }});
+    await c.connect(agent).invest();
+    await expect(c.connect(agent).settle()).to.emit(c, "Settled").withArgs(FEE, CAPITAL);
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("only the principal appoints; only the agent invests and settles", async function () {{
+    await expect(c.connect(agent).appoint({{ value: CAPITAL + FEE }})).to.be.revertedWith("only principal");
+  }});
+}});
+"#,
+        name = name,
+        capital = capital,
+        fee = fee,
+    )
+}
+
+fn wakala_descriptor(name: &str, capital: u64, fee: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "wakala",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "muwakkil",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256"],
+  "constructorArgs": ["@wakil", {capital}, {fee}],
+  "accounts": ["wakil"],
+  "lifecycle": [
+    {{ "as": "muwakkil", "fn": "appoint", "value": {total}, "note": "principal funds the capital plus the known fee" }},
+    {{ "as": "wakil", "fn": "invest", "note": "agent acts on the principal's account" }},
+    {{ "as": "wakil", "fn": "settle", "note": "agent takes only its fee; capital returns to the principal" }}
+  ],
+  "reads": ["appointed","invested","settled"]
+}}
+"#,
+        name = name,
+        capital = capital,
+        fee = fee,
+        total = capital + fee,
     )
 }
 

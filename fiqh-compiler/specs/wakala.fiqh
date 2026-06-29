@@ -1,0 +1,34 @@
+// Wakala bi-l-istithmar (investment agency). The principal (muwakkil) appoints the agent (wakil)
+// to act on his account for a KNOWN fee (ujra). The agent is a trustee, not a guarantor: he does
+// not guarantee the capital or the profit — the realized return (and its risk) belongs to the
+// principal. A guarantee by the agent would convert the agency into a riba-bearing loan. Citations
+// [scholar-verify].
+
+instrument Wakala : wakala {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 23 (Agency and the Act of an Uncommissioned Agent)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    principal : muwakkil;
+    agent     : wakil;
+  }
+
+  returns {
+    agency {
+      capital:         1000000;
+      fee:             20000;   // a KNOWN agency fee (ujra) — licit and gharar-free
+      agent_guarantee: none;    // the agent does NOT guarantee the capital or profit
+    }
+  }
+
+  invariant no_agent_guarantee { agency.agent_guarantee == none }
+  invariant fee_disclosed      { agency.fee != 0 }
+
+  lifecycle {
+    appoint;   // principal appoints the agent and funds the capital + fee
+    invest;    // agent acts on the principal's account
+    settle;    // agent takes only its fee; the capital/return goes to the principal
+  }
+}
