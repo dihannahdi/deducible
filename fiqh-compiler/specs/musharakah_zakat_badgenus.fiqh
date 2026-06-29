@@ -1,0 +1,69 @@
+// NEGATIVE CONTROL — a zakat genus the engine cannot rate. `kind: livestock` does not fit a
+// percentage rate (it is computed by per-head tables), so the engine refuses it as an unknown
+// genus -> ZAKAT-5, rather than silently applying a wrong rate. The compiler must REFUSE and
+// emit no .sol. (Livestock zakat is future work — per-head lookup, not rubʿ al-ʿushr.) Allahu a'lam.
+instrument MusharakahZakatBadGenus : musharakah_mutanaqisah {
+  meta {
+    basis: "an unrateable zakat genus declared on the layer";  // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  zakat {
+    kind: livestock;          // ZAKAT-5: per-head genus, not a percentage rate the engine knows
+    rate_bps: 250;
+    nisab: 8500000 tinybar;
+    haul: hijri_year;
+    beneficiary: maslahah;
+    base: net_liquid_assets;
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

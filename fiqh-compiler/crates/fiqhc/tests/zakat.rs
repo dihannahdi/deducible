@@ -73,3 +73,28 @@ instrument WrongRate : musharakah_mutanaqisah {
     let codes = error_codes(src);
     assert!(codes.iter().any(|c| c == "ZAKAT-1"), "a non-1/40 rate must be refused; got {:?}", codes);
 }
+
+#[test]
+fn produce_zakat_at_ushr_rate_compiles() {
+    // crops_rain -> 'ushr (10%), due at harvest: the genus generalisation beyond tijarah.
+    let src = include_str!("../../../specs/musharakah_zakat_crops.fiqh");
+    let (spec, diags) = compile_check(src).expect("spec should parse");
+    let errors: Vec<&String> = diags.iter().filter(|d| d.is_error()).map(|d| &d.code).collect();
+    assert!(errors.is_empty(), "a valid 'ushr (crops) zakat must compile; got {:?}", errors);
+    let g = codegen::generate(&spec).expect("codegen");
+    assert!(g.sol.contains("ZAKAT_RATE_BPS = 1000"), "the 'ushr rate (10%) must be compiled in");
+}
+
+#[test]
+fn unknown_genus_is_refused() {
+    let codes = error_codes(include_str!("../../../specs/musharakah_zakat_badgenus.fiqh"));
+    assert!(codes.iter().any(|c| c == "ZAKAT-5"), "an unrateable genus (livestock) must raise ZAKAT-5; got {:?}", codes);
+}
+
+#[test]
+fn rate_for_kind_covers_the_genera() {
+    assert_eq!(zakat::rate_for_kind("gold"), Some(250));
+    assert_eq!(zakat::rate_for_kind("crops_rain"), Some(1000));
+    assert_eq!(zakat::rate_for_kind("crops_irrigated"), Some(500));
+    assert_eq!(zakat::rate_for_kind("livestock"), None);
+}

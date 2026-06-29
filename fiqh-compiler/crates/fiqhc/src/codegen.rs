@@ -51,8 +51,8 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RISK-1", "risk.loss", "eq", json!("proportional_to_ownership"), "AAOIFI SS 12 [scholar-verify]");
             add("RIBA-2", "returns.rent.basis", "ne", json!("principal"), "al-Baqarah 2:275 [scholar-verify]");
             add("GHARAR-1", "returns.buyout.priceSource", "eq", json!("oracle"), "prohibition of gharar [scholar-verify]");
-            if zakat_cfg(spec).is_some() {
-                add("ZAKAT-1", "zakat.rate_bps", "eq", json!(250), "rubʿ al-ʿushr (1/40); AAOIFI SS 35 [scholar-verify]");
+            if let Some((zrate, _)) = zakat_cfg(spec) {
+                add("ZAKAT-1", "zakat.rate_bps", "eq", json!(zrate), "the zakat rate for the declared genus (rubʿ al-ʿushr / ʿushr / niṣf al-ʿushr); AAOIFI SS 35 [scholar-verify]");
             }
         }
         Class::Mudarabah => {

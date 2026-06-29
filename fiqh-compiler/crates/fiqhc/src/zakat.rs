@@ -22,12 +22,45 @@
 //! rule. The fiqh of the zakatable BASE (what counts as liquid trade wealth, the treatment
 //! of debts and fixed assets) is the scholar's to define; the engine only applies it.
 
-/// Rubʿ al-ʿushr — one fortieth — expressed in basis points. The single rate for zakat on
-/// trade goods. A spec that declares any other rate is not computing zakat al-tijarah.
+/// Rubʿ al-ʿushr — one fortieth — expressed in basis points. The single rate for trade goods
+/// (and, by the same measure, for gold, silver, currency, salaries and rented assets).
 pub const RATE_BPS_TIJARAH: u64 = 250; // 2.5%
+
+/// ʿushr — one tenth — on rain-fed / unirrigated produce.
+pub const RATE_BPS_USHR: u64 = 1000; // 10%
+
+/// Niṣf al-ʿushr — one twentieth — on produce watered by effort/irrigation (the cost halves the due).
+pub const RATE_BPS_NISF_USHR: u64 = 500; // 5%
 
 /// Basis-point denominator.
 pub const BPS: u64 = 10_000;
+
+/// The expected zakat rate (in bps) for a declared `kind` of zakatable wealth, or `None` if the
+/// kind is not one the engine knows how to rate.
+///
+/// The rubʿ al-ʿushr genera — trade goods, gold, silver, currency, salaries (māl mustafād) and
+/// rented/industrial assets (mustaghallāt) — all carry 1/40 (2.5%). Produce carries ʿushr
+/// (10% if rain-fed) or niṣf al-ʿushr (5% if irrigated by effort/cost) — Sahih al-Bukhari, the
+/// hadith of Ibn ʿUmar; due at HARVEST (al-Anʿam 6:141), not at a lunar haul. Livestock (per-head
+/// tables) does not fit a percentage rate and is handled separately. [scholar-verify]
+pub fn rate_for_kind(kind: &str) -> Option<u64> {
+    match kind {
+        "tijarah" | "gold" | "silver" | "currency" | "salary" | "mustaghallat" => Some(RATE_BPS_TIJARAH),
+        "crops_rain" => Some(RATE_BPS_USHR),
+        "crops_irrigated" => Some(RATE_BPS_NISF_USHR),
+        _ => None,
+    }
+}
+
+/// Is `kind` a zakatable genus the engine can rate? (Produce kinds are due at harvest, not a haul.)
+pub fn is_known_kind(kind: &str) -> bool {
+    rate_for_kind(kind).is_some()
+}
+
+/// Produce (ʿushr/niṣf al-ʿushr) is due at HARVEST, with no lunar haul.
+pub fn is_produce_kind(kind: &str) -> bool {
+    matches!(kind, "crops_rain" | "crops_irrigated")
+}
 
 /// Compute the zakat due on a zakatable `base`, given the `nisab` threshold and the rate in
 /// basis points. Below nisab nothing is due; at or above it, `rate_bps`/10000 of the base.
@@ -85,5 +118,18 @@ mod tests {
         assert!(is_lunar_haul("hijri_year"));
         assert!(!is_lunar_haul("gregorian_year"));
         assert!(!is_lunar_haul("solar_year"));
+    }
+
+    #[test]
+    fn rate_for_each_known_genus() {
+        for g in ["tijarah", "gold", "silver", "currency", "salary", "mustaghallat"] {
+            assert_eq!(rate_for_kind(g), Some(250), "{} is rub' al-'ushr", g);
+        }
+        assert_eq!(rate_for_kind("crops_rain"), Some(1000));
+        assert_eq!(rate_for_kind("crops_irrigated"), Some(500));
+        assert_eq!(rate_for_kind("livestock"), None);
+        assert_eq!(rate_for_kind("nonsense"), None);
+        assert!(is_produce_kind("crops_rain") && is_produce_kind("crops_irrigated"));
+        assert!(!is_produce_kind("gold"));
     }
 }

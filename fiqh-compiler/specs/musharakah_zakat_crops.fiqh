@@ -1,0 +1,71 @@
+// The zakat layer generalised to PRODUCE (ʿushr). The opt-in zakat { } section now carries a
+// `kind`: here crops_rain, rated at ʿushr (10%, one tenth) — the rate for rain-fed produce —
+// due at HARVEST (al-An'am 6:141), not at a lunar haul. (Irrigated produce would be crops_irrigated
+// at niṣf al-ʿushr, 5%.) The section is instrument-agnostic; it rides on this partnership to prove
+// the engine rates the genus and the harvest trigger. Citations [scholar-verify].
+instrument MusharakahZakatCrops : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 (Musharakah) + SS No. 35 (Zakah, produce/ʿushr)";  // [scholar-verify]
+    riba_ref: "al-Baqarah 2:275";                                                              // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  zakat {
+    kind: crops_rain;         // rain-fed produce -> ʿushr (10%)
+    rate_bps: 1000;           // ʿushr = 1/10 = 10% (rain-fed); irrigated would be 500 (5%)
+    nisab: 6530000 tinybar;   // ~5 awsuq equivalent in the ledger's unit
+    haul: harvest;            // produce is due AT HARVEST, not at a lunar haul
+    beneficiary: maslahah;
+    base: harvest_yield;      // scholar defines the zakatable yield; the engine applies the rate
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

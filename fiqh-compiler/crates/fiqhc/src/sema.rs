@@ -248,37 +248,64 @@ fn check_zakat(spec: &Spec, d: &mut Vec<Diagnostic>) {
     if spec.zakat_cfg().is_empty() {
         return;
     }
-    // ZAKAT-1: the rate is rub' al-'ushr — exactly 1/40 (250 bps).
-    match zakat_get(spec, "rate_bps").and_then(|e| e.as_num()) {
-        Some(r) if crate::zakat::is_tijarah_rate(r) => {}
-        Some(r) => d.push(Diagnostic::error(
-            "ZAKAT-1",
+    // ZAKAT-5: the genus must be one the engine can rate. An absent `kind` defaults to tijarah —
+    // back-compatible with the original zakat al-tijarah layer.
+    let kind = zakat_get(spec, "kind").and_then(|e| e.as_ident()).unwrap_or("tijarah");
+    let expected_rate = crate::zakat::rate_for_kind(kind);
+    if expected_rate.is_none() {
+        d.push(Diagnostic::error(
+            "ZAKAT-5",
             spec.span,
-            format!("zakat rate is {} bps; zakat al-tijarah is fixed at 250 bps (1/40 = 2.5%)", r),
+            format!("unknown zakat genus '{}'; known: tijarah/gold/silver/currency/salary/mustaghallat (2.5%), crops_rain (10%), crops_irrigated (5%)", kind),
             C_ZAKAT,
-        )),
-        None => d.push(Diagnostic::error(
-            "ZAKAT-1",
-            spec.span,
-            "zakat block must declare rate_bps: 250 (1/40 = 2.5%)",
-            C_ZAKAT,
-        )),
+        ));
     }
-    // ZAKAT-2: the haul is a HIJRI (lunar) year; a solar year under-collects.
-    match zakat_get(spec, "haul").and_then(|e| e.as_ident()) {
-        Some(h) if crate::zakat::is_lunar_haul(h) => {}
-        Some(h) => d.push(Diagnostic::error(
-            "ZAKAT-2",
-            spec.span,
-            format!("haul '{}' is not a lunar year; zakat's haul is the HIJRI (lunar ~354-day) year — a solar year systematically under-collects", h),
-            C_ZAKAT,
-        )),
-        None => d.push(Diagnostic::error(
-            "ZAKAT-2",
-            spec.span,
-            "zakat block must declare haul: hijri_year",
-            C_ZAKAT,
-        )),
+    // ZAKAT-1: the rate must match the genus — rubʿ al-ʿushr (2.5%) for wealth, ʿushr (10%) for
+    // rain-fed produce, niṣf al-ʿushr (5%) for irrigated produce.
+    if let Some(exp) = expected_rate {
+        match zakat_get(spec, "rate_bps").and_then(|e| e.as_num()) {
+            Some(r) if r == exp => {}
+            Some(r) => d.push(Diagnostic::error(
+                "ZAKAT-1",
+                spec.span,
+                format!("zakat rate is {} bps; zakat on '{}' is {} bps", r, kind, exp),
+                C_ZAKAT,
+            )),
+            None => d.push(Diagnostic::error(
+                "ZAKAT-1",
+                spec.span,
+                format!("zakat block must declare rate_bps: {} for genus '{}'", exp, kind),
+                C_ZAKAT,
+            )),
+        }
+    }
+    // ZAKAT-2: wealth is due at a HIJRI (lunar) haul; produce is due at HARVEST (no haul).
+    if crate::zakat::is_produce_kind(kind) {
+        match zakat_get(spec, "haul").and_then(|e| e.as_ident()) {
+            Some("harvest") => {}
+            _ => d.push(Diagnostic::error(
+                "ZAKAT-2",
+                spec.span,
+                "produce zakat is due at HARVEST (al-Anʿam 6:141), not at a lunar haul; declare haul: harvest",
+                C_ZAKAT,
+            )),
+        }
+    } else {
+        match zakat_get(spec, "haul").and_then(|e| e.as_ident()) {
+            Some(h) if crate::zakat::is_lunar_haul(h) => {}
+            Some(h) => d.push(Diagnostic::error(
+                "ZAKAT-2",
+                spec.span,
+                format!("haul '{}' is not a lunar year; zakat's haul is the HIJRI (lunar ~354-day) year — a solar year systematically under-collects", h),
+                C_ZAKAT,
+            )),
+            None => d.push(Diagnostic::error(
+                "ZAKAT-2",
+                spec.span,
+                "zakat block must declare haul: hijri_year",
+                C_ZAKAT,
+            )),
+        }
     }
     // ZAKAT-3: a positive nisab threshold (the 85g-gold / 595g-silver equivalent).
     match zakat_get(spec, "nisab").and_then(|e| e.as_num()) {
