@@ -30,6 +30,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Tawarruq => gen_tawarruq(spec),
         Class::QardHasan => gen_qard(spec),
         Class::Rahn => gen_rahn(spec),
+        Class::Kafala => gen_kafala(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -98,6 +99,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RAHN-1", "returns.pledge.creditor_use", "eq", json!("none"), "the creditor takes no benefit from the pledge (else riba on the loan) [scholar-verify]");
             add("RAHN-2", "returns.pledge.surplus", "eq", json!("to_pledgor"), "the pledge is not forfeit; surplus over the debt returns to the pledgor [scholar-verify]");
         }
+        Class::Kafala => {
+            add("KAFALA-1", "returns.guarantee.fee", "eq", json!("none"), "no fee for a guarantee (the majority); AAOIFI SS 5 [scholar-verify]");
+            add("KAFALA-2", "returns.guarantee.recourse", "eq", json!("actual_paid"), "recourse for exactly what was paid, no surcharge [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -120,6 +125,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Tawarruq => vec!["mustawriq", "financier", "third_party"],
         Class::QardHasan => vec!["lender", "borrower"],
         Class::Rahn => vec!["pledgor", "pledgee"],
+        Class::Kafala => vec!["kafil", "principal_debtor", "creditor"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -2590,6 +2596,144 @@ fn rahn_descriptor(name: &str, debt: u64, pledge_value: u64) -> String {
         name = name,
         debt = debt,
         pledge_value = pledge_value,
+    )
+}
+
+// =====================================================================================
+// Kafala (suretyship). The guarantor pays the creditor on default, then recovers from the debtor
+// EXACTLY what he paid — no fee, no surcharge. No oracle.
+// =====================================================================================
+
+fn guarantee_amount(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "guarantee")
+        .and_then(|r| kv_get(&r.kvs, "amount"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_kafala(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let amount = guarantee_amount(spec);
+    let mut s = provenance_doc(spec, &format!("{} — kafala (gratuitous suretyship) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(KAFALA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_kafala_test(&name, amount);
+    let descriptor = kafala_descriptor(&name, amount);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const KAFALA_BODY: &str = r#"    address public immutable kafil;     // guarantor
+    address public immutable debtor;    // principal debtor
+    address public immutable creditor;  // makful lahu
+    uint256 public immutable amount;    // the guaranteed obligation
+
+    bool public paid;       // the kafil has paid the creditor on default
+    bool public recovered;  // the kafil has recovered from the debtor
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyKafil() { require(msg.sender == kafil, "only guarantor"); _; }
+    modifier onlyDebtor() { require(msg.sender == debtor, "only debtor"); _; }
+
+    event PaidCreditor(uint256 amount);
+    event RecoveredFromDebtor(uint256 amount);
+
+    /// @dev the kafil binds himself gratuitously — there is no fee field anywhere in this contract.
+    constructor(address _debtor, address _creditor, uint256 _amount) {
+        require(_debtor != address(0) && _creditor != address(0), "zero addr");
+        require(_debtor != msg.sender, "guarantor and debtor must be distinct");
+        require(_amount > 0, "amount");
+        kafil = msg.sender; debtor = _debtor; creditor = _creditor; amount = _amount;
+    }
+
+    /// @dev on the debtor's default the guarantor pays the creditor the guaranteed amount.
+    function payOnDefault() external payable onlyKafil nonReentrant {
+        require(!paid, "already paid");
+        require(msg.value == amount, "must pay exactly the guaranteed amount");
+        paid = true;
+        (bool ok, ) = creditor.call{value: amount}(""); require(ok, "to creditor");
+        emit PaidCreditor(amount);
+    }
+
+    /// @dev INVARIANT recourse_actual: the guarantor recovers from the debtor EXACTLY what he paid,
+    ///      never a surcharge (a surcharge for the guarantee would be riba). INVARIANT no_guarantee_fee.
+    function recover() external payable onlyDebtor nonReentrant {
+        require(paid, "nothing paid yet");
+        require(!recovered, "already recovered");
+        require(msg.value == amount, "recover exactly what the guarantor paid, no surcharge");
+        recovered = true;
+        (bool ok, ) = kafil.call{value: amount}(""); require(ok, "to guarantor");
+        emit RecoveredFromDebtor(amount);
+    }
+"#;
+
+fn gen_kafala_test(name: &str, amount: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Kafala (suretyship). Proves the guarantee is gratuitous: the guarantor
+// pays the creditor and recovers from the debtor EXACTLY what he paid (no fee, no surcharge).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — kafala", function () {{
+  let kafil, debtor, creditor, c;
+  const AMOUNT = {amount}n;
+
+  beforeEach(async function () {{
+    [kafil, debtor, creditor] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(kafil).deploy(debtor.address, creditor.address, AMOUNT);
+    await c.waitForDeployment();
+  }});
+
+  it("the guarantor pays the creditor on default", async function () {{
+    await expect(c.connect(kafil).payOnDefault({{ value: AMOUNT }})).to.emit(c, "PaidCreditor").withArgs(AMOUNT);
+  }});
+
+  it("recourse_actual: the debtor repays EXACTLY what the guarantor paid; a surcharge is rejected", async function () {{
+    await c.connect(kafil).payOnDefault({{ value: AMOUNT }});
+    await expect(c.connect(debtor).recover({{ value: AMOUNT + 1n }})).to.be.revertedWith("recover exactly what the guarantor paid, no surcharge");
+    await expect(c.connect(debtor).recover({{ value: AMOUNT }})).to.emit(c, "RecoveredFromDebtor").withArgs(AMOUNT);
+  }});
+
+  it("only the guarantor pays; only the debtor recovers", async function () {{
+    await expect(c.connect(debtor).payOnDefault({{ value: AMOUNT }})).to.be.revertedWith("only guarantor");
+  }});
+}});
+"#,
+        name = name,
+        amount = amount,
+    )
+}
+
+fn kafala_descriptor(name: &str, amount: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "kafala",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "kafil",
+  "oracle": null,
+  "constructorAbi": ["address","address","uint256"],
+  "constructorArgs": ["@principal_debtor", "@creditor", {amount}],
+  "accounts": ["principal_debtor","creditor"],
+  "lifecycle": [
+    {{ "as": "kafil", "fn": "payOnDefault", "value": {amount}, "note": "guarantor pays the creditor on default" }},
+    {{ "as": "principal_debtor", "fn": "recover", "value": {amount}, "note": "debtor reimburses exactly what was paid" }}
+  ],
+  "reads": ["paid","recovered"]
+}}
+"#,
+        name = name,
+        amount = amount,
     )
 }
 

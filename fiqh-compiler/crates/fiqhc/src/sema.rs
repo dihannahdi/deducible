@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_KAFALA: &str = "kafala / ḍamān (suretyship): AAOIFI Shari'ah Standard No. 5; the guarantee is a gratuitous undertaking (tabarruʿ) — the majority forbid taking a FEE for a guarantee, since it is a benefit on lending one's credit and a paid guarantee can mask riba; 'al-zaʿīm ghārim' — the guarantor is liable (Sunan Abi Dawud, al-Tirmidhi, ḥasan). On paying, the guarantor has recourse to the debtor for exactly what he paid, no surcharge [scholar-verify]";
 const C_RAHN: &str = "rahn (pledge / collateral): al-Baqarah 2:283 (a pledge taken in hand); the Prophet ﷺ pledged his armour to a Jew of Madina for barley (Sahih al-Bukhari, Sahih Muslim). The pledge secures the debt but the creditor takes NO benefit from it (the majority: a benefit to the creditor is riba on the loan), and on default the surplus over the debt returns to the pledgor — the pledge is not forfeit (lā yaghlaqu al-rahn). Held as amāna in the creditor's hand (majority; the Ḥanafīs hold it guaranteed up to the debt) [scholar-verify]";
 const C_QARD: &str = "qarḍ ḥasan (benevolent loan): al-Ḥadid 57:11 and al-Baqarah 2:245 (lending Allah a goodly loan); the loan is repaid in like WITHOUT any stipulated increase or benefit to the lender — 'every loan that draws a benefit is riba' (a well-known maxim; the marfūʿ wording is weak, but the prohibition of a stipulated increase is by ijmaʿ). An unstipulated gift (hadiyya) at repayment is permitted [scholar-verify]";
 const C_TAWARRUQ: &str = "tawarruq: the individual (fardī/classical) form is permitted by the majority — buy a commodity on credit, take possession, then sell it to a THIRD party for spot cash; but selling back to the original seller is bayʿ al-ʿīnah, and ORGANIZED tawarruq (munaẓẓam, where the financier arranges the onward sale into a ring) was forbidden by the OIC International Islamic Fiqh Academy Resolution 179 (19/5), 2009 [scholar-verify]";
@@ -78,6 +79,7 @@ pub enum Class {
     Tawarruq,
     QardHasan,
     Rahn,
+    Kafala,
     CommercialEscrow,
     Unknown(String),
 }
@@ -95,6 +97,7 @@ impl Class {
             "tawarruq" => Class::Tawarruq,
             "qard_hasan" => Class::QardHasan,
             "rahn" => Class::Rahn,
+            "kafala" => Class::Kafala,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -177,6 +180,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Tawarruq => check_tawarruq(spec, &mut d),
         Class::QardHasan => check_qard(spec, &mut d),
         Class::Rahn => check_rahn(spec, &mut d),
+        Class::Kafala => check_kafala(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1320,6 +1324,56 @@ fn check_rahn(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_creditor_benefit", "surplus_to_pledgor"], d);
+}
+
+// --- Kafala (suretyship / guarantee) ---
+//
+// A gratuitous undertaking: the guarantor (kafil) assumes the debtor's obligation to the creditor.
+// The majority forbid taking a FEE for the guarantee (KAFALA-1) — it is a benefit on lent credit and
+// can mask riba. On paying, the guarantor recovers from the debtor exactly what he paid (KAFALA-2),
+// never a surcharge.
+fn check_kafala(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    for (role, who) in [("kafil", "guarantor"), ("principal_debtor", "debtor"), ("creditor", "creditor")] {
+        if role_party(spec, role).is_none() {
+            d.push(Diagnostic::error("PARTY-1", spec.span, format!("kafala requires a party with role '{}' ({})", role, who), C_KAFALA));
+        }
+    }
+    let kafil = role_party(spec, "kafil").map(|p| p.name.clone());
+    let debtor = role_party(spec, "principal_debtor").map(|p| p.name.clone());
+    if let (Some(k), Some(db)) = (&kafil, &debtor) {
+        if k == db {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "the guarantor (kafil) and the principal debtor must be distinct parties", C_KAFALA));
+        }
+    }
+
+    match find_return(spec, "guarantee") {
+        None => d.push(Diagnostic::error(
+            "KAFALA-1",
+            spec.span,
+            "kafala requires returns { guarantee { amount; fee; recourse } }",
+            C_KAFALA,
+        )),
+        Some(g) => {
+            // KAFALA-1: no fee for the guarantee itself.
+            match ret_kv(g, "fee").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("KAFALA-1", g.span, format!("a fee '{}' is taken for the guarantee; the majority forbid a fee for kafala (a benefit on lent credit that can mask riba)", other), C_KAFALA)),
+                None => d.push(Diagnostic::error("KAFALA-1", g.span, "kafala must declare fee: none (no fee for the guarantee)", C_KAFALA)),
+            }
+            // KAFALA-2: recourse to the debtor for exactly what was paid, no surcharge.
+            match ret_kv(g, "recourse").and_then(|kv| kv.val.as_ident()) {
+                Some("actual_paid") => {}
+                Some(other) => d.push(Diagnostic::error("KAFALA-2", g.span, format!("recourse is '{}'; the guarantor recovers from the debtor exactly what he paid — a surcharge would be riba", other), C_KAFALA)),
+                None => d.push(Diagnostic::error("KAFALA-2", g.span, "kafala must declare recourse: actual_paid (recover exactly what was paid)", C_KAFALA)),
+            }
+            match ret_kv(g, "amount").and_then(|kv| kv.val.as_num()) {
+                Some(n) if n > 0 => {}
+                _ => d.push(Diagnostic::error("KAFALA-1", g.span, "kafala must declare a positive guaranteed amount", C_KAFALA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["no_guarantee_fee", "recourse_actual"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

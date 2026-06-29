@@ -1,0 +1,33 @@
+// NEGATIVE CONTROL — a paid guarantee with a surcharge on recourse. Two faults:
+//   (1) fee: 20000 — a fee taken for the guarantee itself (the majority forbid it) -> KAFALA-1.
+//   (2) recourse: with_surcharge — the guarantor recovers more than he paid -> KAFALA-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument KafalaRiba : kafala {
+  meta {
+    basis: "a paid guarantee recovering a surcharge";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    guarantor : kafil;
+    debtor    : principal_debtor;
+    creditor  : creditor;
+  }
+
+  returns {
+    guarantee {
+      amount:   1000000;
+      fee:      20000;          // KAFALA-1: a fee for the guarantee
+      recourse: with_surcharge; // KAFALA-2: recover more than was paid
+    }
+  }
+
+  invariant no_guarantee_fee { guarantee.fee == none }
+  invariant recourse_actual  { guarantee.recourse == actual_paid }
+
+  lifecycle {
+    payOnDefault;
+    recover;
+  }
+}

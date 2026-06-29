@@ -1,0 +1,33 @@
+// Kafala / daman (suretyship). The guarantor (kafil) gratuitously assumes the debtor's obligation
+// to the creditor. The majority forbid taking a FEE for the guarantee (it is a benefit on lent
+// credit and can mask riba). On paying the creditor at default, the guarantor recovers from the
+// debtor exactly what he paid — no surcharge. Citations [scholar-verify].
+
+instrument Kafala : kafala {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 5 (Guarantees); al-za'im gharim (Abu Dawud, Tirmidhi)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    guarantor : kafil;
+    debtor    : principal_debtor;
+    creditor  : creditor;
+  }
+
+  returns {
+    guarantee {
+      amount:   1000000;      // the guaranteed obligation
+      fee:      none;         // no fee for the guarantee itself
+      recourse: actual_paid;  // recover from the debtor exactly what was paid, no surcharge
+    }
+  }
+
+  invariant no_guarantee_fee { guarantee.fee == none }
+  invariant recourse_actual  { guarantee.recourse == actual_paid }
+
+  lifecycle {
+    payOnDefault;   // the kafil pays the creditor on the debtor's default
+    recover;        // the kafil recovers from the debtor exactly what he paid
+  }
+}
