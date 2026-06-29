@@ -19,6 +19,7 @@ const C_GHARAR: &str = "prohibition of gharar (Sahih Muslim, Kitab al-Buyu') [sc
 const C_MUDARABAH: &str = "AAOIFI Shari'ah Standard No. 13 (Mudarabah) [scholar-verify]";
 const C_IJARAH: &str = "AAOIFI Shari'ah Standard No. 9 (Ijarah) [scholar-verify]";
 const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI Shari'ah Standard No. 8; the buyer must know the true cost; the seller must possess the good first — 'do not sell what you do not have' (Hakim b. Hizam — Sunan Abi Dawud, al-Tirmidhi, al-Nasa'i); al-Baqarah 2:275 (Allah permitted trade and forbade riba) [scholar-verify]";
+const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,7 @@ pub enum Class {
     Mudarabah,
     IjarahImbt,
     Murabahah,
+    Salam,
     CommercialEscrow,
     Unknown(String),
 }
@@ -77,6 +79,7 @@ impl Class {
             "mudarabah" => Class::Mudarabah,
             "ijarah_imbt" => Class::IjarahImbt,
             "murabahah" => Class::Murabahah,
+            "salam" => Class::Salam,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -152,6 +155,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
             }
         }
         Class::Murabahah => check_murabahah(spec, &mut d),
+        Class::Salam => check_salam(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -839,6 +843,83 @@ fn check_murabahah(spec: &Spec, d: &mut Vec<Diagnostic>) {
         &["cost_disclosed", "markup_fixed", "price_certain", "prior_ownership", "no_penalty_interest"],
         d,
     );
+}
+
+// --- Salam (forward sale: full prepayment now, described good delivered later) ---
+//
+// Salam is the one sale where the object need not yet exist — precisely because the price is
+// paid IN FULL at the session. The fiqh holds it tight against gharar: (1) defer the price and
+// you have bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt); (2) leave the object un-described and you
+// have gharar. So the engine demands full prepayment, a known quantity, and a known term.
+fn check_salam(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let buyer = role_party(spec, "buyer").map(|p| p.name.clone());
+    let seller = role_party(spec, "seller").map(|p| p.name.clone());
+    if buyer.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "a salam requires a party with role 'buyer' (rabb al-salam, who pays the price now)", C_SALAM));
+    }
+    if seller.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "a salam requires a party with role 'seller' (al-muslam ilayh, who delivers later)", C_SALAM));
+    }
+    if let (Some(b), Some(s)) = (&buyer, &seller) {
+        if b == s {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "buyer and seller must be distinct parties", C_SALAM));
+        }
+    }
+
+    match find_return(spec, "salam") {
+        None => d.push(Diagnostic::error(
+            "SALAM-1",
+            spec.span,
+            "a salam requires returns { salam { price; payment; quantity; measure; quality; delivery_date } }",
+            C_SALAM,
+        )),
+        Some(s) => {
+            // SALAM-1: the whole price (ra's al-mal) is paid at the session — never deferred.
+            match ret_kv(s, "payment") {
+                Some(kv) if kv.val.as_ident() == Some("spot_full") => {}
+                Some(kv) => d.push(Diagnostic::error(
+                    "SALAM-1",
+                    kv.span,
+                    format!("salam payment is '{}'; the full ra's al-mal must be paid at the session — deferring both price and good is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt)", kv.val.render()),
+                    C_SALAM,
+                )),
+                None => d.push(Diagnostic::error(
+                    "SALAM-1",
+                    s.span,
+                    "salam must declare payment: spot_full (the full price paid at the session)",
+                    C_SALAM,
+                )),
+            }
+            // SALAM-2: the muslam fih is a known quantity (maʿlūm) — and a measure + quality.
+            match ret_kv(s, "quantity") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error(
+                    "SALAM-2",
+                    s.span,
+                    "salam must declare a known, positive quantity of the muslam fih (maʿlūm; an unknown quantity is gharar)",
+                    C_SALAM,
+                )),
+            }
+            if ret_kv(s, "measure").and_then(|kv| kv.val.as_ident()).is_none() {
+                d.push(Diagnostic::error("SALAM-2", s.span, "salam must declare the measure (kayl/wazn) of the muslam fih", C_SALAM));
+            }
+            if ret_kv(s, "quality").and_then(|kv| kv.val.as_ident()).is_none() {
+                d.push(Diagnostic::error("SALAM-2", s.span, "salam must declare the quality/grade of the muslam fih (so it is fully maʿlūm)", C_SALAM));
+            }
+            // SALAM-3: a known future delivery date (ajal maʿlūm).
+            match ret_kv(s, "delivery_date") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error(
+                    "SALAM-3",
+                    s.span,
+                    "salam must declare a known future delivery_date (ajal maʿlūm)",
+                    C_SALAM,
+                )),
+            }
+        }
+    }
+
+    require_invariants(spec, &["full_prepayment", "object_known", "delivery_known"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

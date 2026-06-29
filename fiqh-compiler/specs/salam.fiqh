@@ -1,0 +1,38 @@
+// Salam (forward sale). The buyer pays the full price now (ra's al-mal, at the session); the
+// seller delivers a described fungible good — known kind, measure, quality, quantity — at a known
+// future date. It is the one sale where the object need not yet exist, allowed precisely BECAUSE
+// the price is paid in full up front. Defer the price and it becomes bay' al-kali' bi-l-kali'
+// (debt for debt); leave the object vague and it is gharar. Citations [scholar-verify].
+
+instrument Salam : salam {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 10 (Salam); hadith of Ibn 'Abbas (al-Bukhari, Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    buyer  : buyer;     // rabb al-salam — pays the price now
+    seller : seller;    // al-muslam ilayh — delivers the good later
+  }
+
+  returns {
+    salam {
+      price:         1000000;   // ra's al-mal al-salam — paid IN FULL at the session
+      payment:       spot_full; // full prepayment (else bay' al-kali' bi-l-kali')
+      quantity:      100;       // the muslam fih: a known quantity...
+      measure:       ardabb;    // ...of a known measure (kayl/wazn)...
+      quality:       grade_a;   // ...and known quality (all ma'lum)
+      delivery_date: 90;        // a known future delivery date (ajal ma'lum)
+    }
+  }
+
+  invariant full_prepayment { salam.payment == spot_full }
+  invariant object_known    { salam.quantity != 0 }
+  invariant delivery_known  { salam.delivery_date != 0 }
+
+  lifecycle {
+    payPriceInFull;   // the buyer pays ra's al-mal in full at the session
+    deliver;          // the seller delivers the described good at the known date
+    confirmReceipt;   // the buyer confirms receipt; salam settles
+  }
+}

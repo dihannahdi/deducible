@@ -24,6 +24,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Mudarabah => gen_mudarabah(spec),
         Class::IjarahImbt => gen_ijarah(spec),
         Class::Murabahah => gen_murabahah(spec),
+        Class::Salam => gen_salam(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -66,6 +67,11 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RIBA-2", "returns.sale.markup_basis", "eq", json!("fixed"), "a markup that grows with time is interest; al-Baqarah 2:275 [scholar-verify]");
             add("RIBA-3", "returns.sale.late_penalty", "eq", json!("none"), "no penalty-interest on the resulting debt [scholar-verify]");
         }
+        Class::Salam => {
+            add("SALAM-1", "returns.salam.payment", "eq", json!("spot_full"), "ra's al-mal paid in full at the session; else bayʿ al-kaliʾ bi-l-kaliʾ; AAOIFI SS 10 [scholar-verify]");
+            add("SALAM-2", "returns.salam.quantity", "gt", json!(0), "the muslam fih must be a known quantity (maʿlūm); Bukhari/Muslim, Ibn ʿAbbas [scholar-verify]");
+            add("SALAM-3", "returns.salam.delivery_date", "gt", json!(0), "delivery at a known term (ajal maʿlūm) [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -82,6 +88,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Mudarabah => vec!["rabb_al_mal", "mudarib"],
         Class::IjarahImbt => vec!["lessor", "lessee"],
         Class::Murabahah => vec!["seller", "buyer"],
+        Class::Salam => vec!["buyer", "seller"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -1542,6 +1549,168 @@ fn murabahah_descriptor(name: &str, cost: u64, markup: u64) -> String {
         cost = cost,
         markup = markup,
         total = cost + markup,
+    )
+}
+
+// =====================================================================================
+// Salam (forward sale). The buyer pays the FULL price at the session; the seller delivers a
+// described fungible good at a known future date. No oracle (the price is fixed at contract).
+// =====================================================================================
+
+fn salam_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "salam")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_salam(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let price = salam_field(spec, "price");
+    let quantity = salam_field(spec, "quantity");
+    let delivery = salam_field(spec, "delivery_date");
+    let mut s = provenance_doc(spec, &format!("{} — salam (forward sale, full prepayment) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(SALAM_BODY);
+    s.push_str("}\n");
+    let test_js = gen_salam_test(&name, price, quantity, delivery);
+    let descriptor = salam_descriptor(&name, price, quantity, delivery);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const SALAM_BODY: &str = r#"    address public immutable buyer;        // rabb al-salam — pays the price now
+    address public immutable seller;       // al-muslam ilayh — delivers the good later
+    uint256 public immutable price;        // ra's al-mal al-salam — paid IN FULL at the session
+    uint256 public immutable quantity;     // the muslam fih: a known quantity (maʿlūm)...
+    uint256 public immutable deliveryDate; // ...delivered at a known future date (ajal maʿlūm)
+
+    bool public paid;
+    bool public delivered;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyBuyer() { require(msg.sender == buyer, "only buyer"); _; }
+    modifier onlySeller() { require(msg.sender == seller, "only seller"); _; }
+
+    event PricePaid(uint256 amount);
+    event Delivered(uint256 quantity);
+    event Settled();
+
+    /// @dev INVARIANT object_known: quantity > 0. INVARIANT delivery_known: deliveryDate > 0.
+    constructor(address _seller, uint256 _price, uint256 _quantity, uint256 _deliveryDate) {
+        require(_seller != address(0), "zero addr");
+        require(_seller != msg.sender, "buyer and seller must be distinct");
+        require(_price > 0, "price");
+        require(_quantity > 0, "the muslam fih must be a known quantity (ma'lum)");
+        require(_deliveryDate > 0, "delivery must be at a known future date (ajal ma'lum)");
+        buyer = msg.sender; seller = _seller; price = _price; quantity = _quantity; deliveryDate = _deliveryDate;
+    }
+
+    /// @dev INVARIANT full_prepayment: the entire ra's al-mal is paid at the session — never
+    ///      deferred (deferring both price and good is bayʿ al-kaliʾ bi-l-kaliʾ, debt for debt).
+    function payPriceInFull() external payable onlyBuyer nonReentrant {
+        require(!paid, "already paid");
+        require(msg.value == price, "the full salam price must be paid at the session");
+        paid = true;
+        (bool ok, ) = seller.call{value: price}(""); require(ok, "forward to seller failed");
+        emit PricePaid(price);
+    }
+
+    function deliver() external onlySeller {
+        require(paid, "price not yet paid");
+        require(!delivered, "already delivered");
+        delivered = true; emit Delivered(quantity);
+    }
+
+    function confirmReceipt() external onlyBuyer {
+        require(delivered, "not yet delivered");
+        require(!settled, "already settled");
+        settled = true; emit Settled();
+    }
+"#;
+
+fn gen_salam_test(name: &str, price: u64, quantity: u64, delivery: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Salam (forward sale). Proves the gharar guards: full prepayment at the
+// session (no debt-for-debt), a known quantity, and a known delivery term.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — salam forward sale", function () {{
+  let buyer, seller, c;
+  const PRICE = {price}n, QTY = {quantity}n, DDATE = {delivery}n;
+
+  beforeEach(async function () {{
+    [buyer, seller] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(buyer).deploy(seller.address, PRICE, QTY, DDATE);
+    await c.waitForDeployment();
+  }});
+
+  it("object_known + delivery_known are set at contract", async function () {{
+    expect(await c.quantity()).to.equal(QTY);
+    expect(await c.deliveryDate()).to.equal(DDATE);
+  }});
+
+  it("full_prepayment: a partial price is rejected (no debt-for-debt)", async function () {{
+    await expect(c.connect(buyer).payPriceInFull({{ value: PRICE - 1n }})).to.be.revertedWith("the full salam price must be paid at the session");
+  }});
+
+  it("full lifecycle: pay in full -> seller receives the capital -> deliver -> settle", async function () {{
+    await expect(c.connect(buyer).payPriceInFull({{ value: PRICE }})).to.emit(c, "PricePaid").withArgs(PRICE);
+    await c.connect(seller).deliver();
+    await expect(c.connect(buyer).confirmReceipt()).to.emit(c, "Settled");
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("the seller cannot deliver before the price is paid", async function () {{
+    await expect(c.connect(seller).deliver()).to.be.revertedWith("price not yet paid");
+  }});
+
+  it("only the buyer pays and only the seller delivers", async function () {{
+    await expect(c.connect(seller).payPriceInFull({{ value: PRICE }})).to.be.revertedWith("only buyer");
+  }});
+}});
+"#,
+        name = name,
+        price = price,
+        quantity = quantity,
+        delivery = delivery,
+    )
+}
+
+fn salam_descriptor(name: &str, price: u64, quantity: u64, delivery: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "salam",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "buyer",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256","uint256"],
+  "constructorArgs": ["@seller", {price}, {quantity}, {delivery}],
+  "accounts": ["seller"],
+  "lifecycle": [
+    {{ "as": "buyer", "fn": "payPriceInFull", "value": {price}, "note": "ra's al-mal paid in full at the session" }},
+    {{ "as": "seller", "fn": "deliver", "note": "the described good delivered at the known term" }},
+    {{ "as": "buyer", "fn": "confirmReceipt", "note": "buyer confirms; salam settled" }}
+  ],
+  "reads": ["quantity","deliveryDate","settled"]
+}}
+"#,
+        name = name,
+        price = price,
+        quantity = quantity,
+        delivery = delivery,
     )
 }
 

@@ -1,0 +1,38 @@
+// NEGATIVE CONTROL — a "salam" that has collapsed into a forbidden form. Two faults:
+//   (1) payment: deferred — deferring BOTH the price and the good is bay' al-kali' bi-l-kali'
+//       (debt for debt) → SALAM-1.
+//   (2) delivery_date: 0 — no known term (ajal majhul) → SALAM-3.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument SalamRiba : salam {
+  meta {
+    basis: "a debt-for-debt dressed as salam";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    buyer  : buyer;
+    seller : seller;
+  }
+
+  returns {
+    salam {
+      price:         1000000;
+      payment:       deferred;  // SALAM-1: the price must be paid in full at the session
+      quantity:      100;
+      measure:       ardabb;
+      quality:       grade_a;
+      delivery_date: 0;         // SALAM-3: no known delivery term (ajal majhul)
+    }
+  }
+
+  invariant full_prepayment { salam.payment == spot_full }
+  invariant object_known    { salam.quantity != 0 }
+  invariant delivery_known  { salam.delivery_date != 0 }
+
+  lifecycle {
+    payPriceInFull;
+    deliver;
+    confirmReceipt;
+  }
+}
