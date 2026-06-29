@@ -26,6 +26,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Murabahah => gen_murabahah(spec),
         Class::Salam => gen_salam(spec),
         Class::Istisna => gen_istisna(spec),
+        Class::Sarf => gen_sarf(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -78,6 +79,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("ISTISNA-2", "returns.istisna.material_by", "eq", json!("manufacturer"), "the saniʿ supplies the materials, else ijarat al-ʿamal; AAOIFI SS 11 [scholar-verify]");
             add("ISTISNA-3", "returns.istisna.price", "gt", json!(0), "a known fixed price [scholar-verify]");
         }
+        Class::Sarf => {
+            add("SARF-1", "returns.exchange.settlement", "eq", json!("spot"), "yadan bi-yad; deferral is riba al-nasiʾa; hadith ʿUbada (Muslim); AAOIFI SS 1 [scholar-verify]");
+            // SARF-2 (same-genus equality) is conditional on same_genus and enforced in-engine.
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -96,6 +101,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Murabahah => vec!["seller", "buyer"],
         Class::Salam => vec!["buyer", "seller"],
         Class::Istisna => vec!["buyer", "manufacturer"],
+        Class::Sarf => vec!["exchanger_a", "exchanger_b"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -1888,6 +1894,177 @@ fn istisna_descriptor(name: &str, price: u64) -> String {
 "#,
         name = name,
         price = price,
+    )
+}
+
+// =====================================================================================
+// Sarf (currency / metal exchange). Two legs escrowed and released ATOMICALLY (yadan bi-yad);
+// a same-genus exchange is forced equal-for-equal at construction. No oracle.
+// =====================================================================================
+
+fn sarf_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "exchange")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn sarf_same_genus(spec: &Spec) -> bool {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "exchange")
+        .and_then(|r| kv_get(&r.kvs, "same_genus"))
+        .and_then(|e| e.as_ident().map(|s| s == "yes"))
+        .unwrap_or(false)
+}
+
+fn gen_sarf(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let give = sarf_field(spec, "give_amount");
+    let take = sarf_field(spec, "take_amount");
+    let same = sarf_same_genus(spec);
+    let mut s = provenance_doc(spec, &format!("{} — ṣarf (spot currency/metal exchange, yadan bi-yad) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(SARF_BODY);
+    s.push_str("}\n");
+    let test_js = gen_sarf_test(&name, give, take, same);
+    let descriptor = sarf_descriptor(&name, give, take, same);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const SARF_BODY: &str = r#"    address public immutable partyA;
+    address public immutable partyB;
+    uint256 public immutable giveAmount;  // party A's leg
+    uint256 public immutable takeAmount;  // party B's leg
+    bool public immutable sameGenus;
+
+    bool public depositedA;
+    bool public depositedB;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyA() { require(msg.sender == partyA, "only party A"); _; }
+    modifier onlyB() { require(msg.sender == partyB, "only party B"); _; }
+
+    event DepositedA(uint256 amount);
+    event DepositedB(uint256 amount);
+    event Settled(uint256 toA, uint256 toB);
+
+    /// @dev INVARIANT riba_fadl_guarded: a same-genus exchange must be equal for equal (no excess).
+    constructor(address _partyB, uint256 _giveAmount, uint256 _takeAmount, bool _sameGenus) {
+        require(_partyB != address(0), "zero addr");
+        require(_partyB != msg.sender, "two distinct counterparties");
+        require(_giveAmount > 0 && _takeAmount > 0, "amounts");
+        if (_sameGenus) { require(_giveAmount == _takeAmount, "same-genus exchange must be equal (riba al-fadl)"); }
+        partyA = msg.sender; partyB = _partyB; giveAmount = _giveAmount; takeAmount = _takeAmount; sameGenus = _sameGenus;
+    }
+
+    function depositA() external payable onlyA {
+        require(!depositedA, "deposited");
+        require(msg.value == giveAmount, "exact leg A");
+        depositedA = true; emit DepositedA(msg.value);
+    }
+
+    function depositB() external payable onlyB {
+        require(!depositedB, "deposited");
+        require(msg.value == takeAmount, "exact leg B");
+        depositedB = true; emit DepositedB(msg.value);
+    }
+
+    /// @dev INVARIANT spot_settlement: yadan bi-yad — neither leg is released until BOTH are in;
+    ///      settlement is atomic in one transaction (no deferral = no riba al-nasi'a).
+    function settle() external nonReentrant {
+        require(msg.sender == partyA || msg.sender == partyB, "only a party");
+        require(depositedA && depositedB, "both legs must be present (yadan bi-yad)");
+        require(!settled, "settled");
+        settled = true;
+        (bool okA, ) = partyA.call{value: takeAmount}(""); require(okA, "to A");
+        (bool okB, ) = partyB.call{value: giveAmount}(""); require(okB, "to B");
+        emit Settled(takeAmount, giveAmount);
+    }
+"#;
+
+fn gen_sarf_test(name: &str, give: u64, take: u64, same: bool) -> String {
+    let same_js = if same { "true" } else { "false" };
+    format!(
+        r#"// Generated by fiqhc — Sarf (spot exchange). Proves yadan bi-yad (atomic, no deferral) and,
+// for a same-genus exchange, equal-for-equal (no riba al-fadl).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — sarf spot exchange", function () {{
+  let partyA, partyB, c;
+  const GIVE = {give}n, TAKE = {take}n, SAME = {same_js};
+
+  beforeEach(async function () {{
+    [partyA, partyB] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(partyA).deploy(partyB.address, GIVE, TAKE, SAME);
+    await c.waitForDeployment();
+  }});
+
+  it("spot_settlement: settle reverts until BOTH legs are present (yadan bi-yad)", async function () {{
+    await c.connect(partyA).depositA({{ value: GIVE }});
+    await expect(c.connect(partyA).settle()).to.be.revertedWith("both legs must be present (yadan bi-yad)");
+  }});
+
+  it("atomic settle: both legs in -> A receives B's leg and B receives A's leg", async function () {{
+    await c.connect(partyA).depositA({{ value: GIVE }});
+    await c.connect(partyB).depositB({{ value: TAKE }});
+    await expect(c.connect(partyA).settle()).to.emit(c, "Settled").withArgs(TAKE, GIVE);
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("riba_fadl_guarded: a same-genus exchange with unequal amounts cannot deploy", async function () {{
+    const F = await ethers.getContractFactory("{name}");
+    await expect(F.connect(partyA).deploy(partyB.address, 1000n, 1100n, true)).to.be.revertedWith("same-genus exchange must be equal (riba al-fadl)");
+  }});
+
+  it("only the right party funds each leg", async function () {{
+    await expect(c.connect(partyB).depositA({{ value: GIVE }})).to.be.revertedWith("only party A");
+  }});
+}});
+"#,
+        name = name,
+        give = give,
+        take = take,
+        same_js = same_js,
+    )
+}
+
+fn sarf_descriptor(name: &str, give: u64, take: u64, same: bool) -> String {
+    let same_js = if same { "true" } else { "false" };
+    format!(
+        r#"{{
+  "instrument": "sarf",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "exchanger_a",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256","bool"],
+  "constructorArgs": ["@exchanger_b", {give}, {take}, {same_js}],
+  "accounts": ["exchanger_b"],
+  "lifecycle": [
+    {{ "as": "exchanger_a", "fn": "depositA", "value": {give}, "note": "party A escrows its leg" }},
+    {{ "as": "exchanger_b", "fn": "depositB", "value": {take}, "note": "party B escrows its leg" }},
+    {{ "as": "exchanger_a", "fn": "settle", "note": "atomic spot swap (yadan bi-yad)" }}
+  ],
+  "reads": ["settled"]
+}}
+"#,
+        name = name,
+        give = give,
+        take = take,
+        same_js = same_js,
     )
 }
 

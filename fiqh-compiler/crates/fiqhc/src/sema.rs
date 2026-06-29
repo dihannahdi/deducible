@@ -21,6 +21,7 @@ const C_IJARAH: &str = "AAOIFI Shari'ah Standard No. 9 (Ijarah) [scholar-verify]
 const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI Shari'ah Standard No. 8; the buyer must know the true cost; the seller must possess the good first — 'do not sell what you do not have' (Hakim b. Hizam — Sunan Abi Dawud, al-Tirmidhi, al-Nasa'i); al-Baqarah 2:275 (Allah permitted trade and forbade riba) [scholar-verify]";
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
+const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +71,7 @@ pub enum Class {
     Murabahah,
     Salam,
     Istisna,
+    Sarf,
     CommercialEscrow,
     Unknown(String),
 }
@@ -83,6 +85,7 @@ impl Class {
             "murabahah" => Class::Murabahah,
             "salam" => Class::Salam,
             "istisna" => Class::Istisna,
+            "sarf" => Class::Sarf,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -160,6 +163,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Murabahah => check_murabahah(spec, &mut d),
         Class::Salam => check_salam(spec, &mut d),
         Class::Istisna => check_istisna(spec, &mut d),
+        Class::Sarf => check_sarf(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -988,6 +992,70 @@ fn check_istisna(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["object_specified", "material_by_maker", "price_known"], d);
+}
+
+// --- Sarf (currency / precious-metal exchange) ---
+//
+// The six-commodities hadith reduces to two pure invariants: SAME genus ⇒ equal amounts (else
+// riba al-faḍl); ANY exchange ⇒ settled spot, hand-to-hand (else riba al-nasiʾa). Cross-genus
+// amounts may differ (the rate), but the spot requirement never relaxes.
+fn check_sarf(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let a = role_party(spec, "exchanger_a").map(|p| p.name.clone());
+    let b = role_party(spec, "exchanger_b").map(|p| p.name.clone());
+    if a.is_none() || b.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "a ṣarf requires two parties with roles 'exchanger_a' and 'exchanger_b'", C_SARF));
+    }
+    if let (Some(x), Some(y)) = (&a, &b) {
+        if x == y {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "the two counterparties to a ṣarf must be distinct", C_SARF));
+        }
+    }
+
+    match find_return(spec, "exchange") {
+        None => d.push(Diagnostic::error(
+            "SARF-1",
+            spec.span,
+            "a ṣarf requires returns { exchange { give_asset; give_amount; take_asset; take_amount; same_genus; settlement } }",
+            C_SARF,
+        )),
+        Some(ex) => {
+            // SARF-1: settled spot (yadan bi-yad) — deferring either leg is riba al-nasiʾa.
+            match ret_kv(ex, "settlement") {
+                Some(kv) if kv.val.as_ident() == Some("spot") => {}
+                Some(kv) => d.push(Diagnostic::error(
+                    "SARF-1",
+                    kv.span,
+                    format!("settlement is '{}'; a ṣarf must be spot/yadan bi-yad — deferring either leg is riba al-nasiʾa", kv.val.render()),
+                    C_SARF,
+                )),
+                None => d.push(Diagnostic::error("SARF-1", ex.span, "ṣarf must declare settlement: spot (yadan bi-yad)", C_SARF)),
+            }
+            let give = ret_kv(ex, "give_amount").and_then(|kv| kv.val.as_num());
+            let take = ret_kv(ex, "take_amount").and_then(|kv| kv.val.as_num());
+            if give.map(|n| n == 0).unwrap_or(true) || take.map(|n| n == 0).unwrap_or(true) {
+                d.push(Diagnostic::error("SARF-3", ex.span, "ṣarf must declare positive give_amount and take_amount", C_SARF));
+            }
+            // SARF-2: same genus ⇒ equal for equal (else riba al-faḍl). Cross-genus may differ.
+            match ret_kv(ex, "same_genus").and_then(|kv| kv.val.as_ident()) {
+                Some("yes") => {
+                    if let (Some(g), Some(t)) = (give, take) {
+                        if g != t {
+                            d.push(Diagnostic::error(
+                                "SARF-2",
+                                ex.span,
+                                format!("a same-genus exchange is {} for {}; like must be EQUAL for like — any excess is riba al-faḍl", g, t),
+                                C_SARF,
+                            ));
+                        }
+                    }
+                }
+                Some("no") => {}
+                _ => d.push(Diagnostic::error("SARF-2", ex.span, "ṣarf must declare same_genus: yes|no (same genus forces equal amounts)", C_SARF)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["spot_settlement", "riba_fadl_guarded"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

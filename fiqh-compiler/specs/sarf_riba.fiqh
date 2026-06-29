@@ -1,0 +1,36 @@
+// NEGATIVE CONTROL — gold for gold, but unequal AND deferred: both ribas at once.
+//   (1) same_genus: yes with give 1000 != take 1100 -> riba al-fadl -> SARF-2.
+//   (2) settlement: deferred -> riba al-nasi'a -> SARF-1.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument SarfRiba : sarf {
+  meta {
+    basis: "gold-for-gold unequal and deferred — riba al-fadl + riba al-nasi'a";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    partyA : exchanger_a;
+    partyB : exchanger_b;
+  }
+
+  returns {
+    exchange {
+      give_asset:  gold;
+      give_amount: 1000;
+      take_asset:  gold;
+      take_amount: 1100;     // SARF-2: same genus must be equal
+      same_genus:  yes;
+      settlement:  deferred; // SARF-1: must be spot (yadan bi-yad)
+    }
+  }
+
+  invariant spot_settlement   { exchange.settlement == spot }
+  invariant riba_fadl_guarded { exchange.same_genus == no }
+
+  lifecycle {
+    depositA;
+    depositB;
+    settle;
+  }
+}

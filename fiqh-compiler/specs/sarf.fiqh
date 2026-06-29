@@ -1,0 +1,36 @@
+// Sarf (currency / precious-metal exchange). The six-commodities hadith reduces to two rules:
+// same genus -> equal for equal (else riba al-fadl); any exchange -> hand to hand, spot (else
+// riba al-nasi'a). This is a cross-genus exchange (USD for EUR): the amounts may differ by the
+// rate, but settlement must still be spot. Citations [scholar-verify].
+
+instrument Sarf : sarf {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 1 (Trading in Currencies); hadith of 'Ubada b. al-Samit (Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    partyA : exchanger_a;
+    partyB : exchanger_b;
+  }
+
+  returns {
+    exchange {
+      give_asset:  usd;
+      give_amount: 1000;
+      take_asset:  eur;
+      take_amount: 920;
+      same_genus:  no;     // usd != eur -> cross-genus, amounts may differ by the rate
+      settlement:  spot;   // yadan bi-yad — both legs in the same session
+    }
+  }
+
+  invariant spot_settlement  { exchange.settlement == spot }
+  invariant riba_fadl_guarded { exchange.same_genus == no }
+
+  lifecycle {
+    depositA;
+    depositB;
+    settle;
+  }
+}
