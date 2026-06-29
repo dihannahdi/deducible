@@ -27,6 +27,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Salam => gen_salam(spec),
         Class::Istisna => gen_istisna(spec),
         Class::Sarf => gen_sarf(spec),
+        Class::Tawarruq => gen_tawarruq(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -83,6 +84,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("SARF-1", "returns.exchange.settlement", "eq", json!("spot"), "yadan bi-yad; deferral is riba al-nasiʾa; hadith ʿUbada (Muslim); AAOIFI SS 1 [scholar-verify]");
             // SARF-2 (same-genus equality) is conditional on same_genus and enforced in-engine.
         }
+        Class::Tawarruq => {
+            add("TAWARRUQ-1", "returns.spot_sale.buyer", "ne", json!("financier"), "the onward sale must go to a third party, not back to the seller (else bayʿ al-ʿīnah) [scholar-verify]");
+            add("TAWARRUQ-3", "returns.spot_sale.arranged_by", "ne", json!("financier"), "organized tawarruq (arranged by the financier) is forbidden — OIC Fiqh Academy Res. 179 (19/5) [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -102,6 +107,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Salam => vec!["buyer", "seller"],
         Class::Istisna => vec!["buyer", "manufacturer"],
         Class::Sarf => vec!["exchanger_a", "exchanger_b"],
+        Class::Tawarruq => vec!["mustawriq", "financier", "third_party"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -2065,6 +2071,192 @@ fn sarf_descriptor(name: &str, give: u64, take: u64, same: bool) -> String {
         give = give,
         take = take,
         same_js = same_js,
+    )
+}
+
+// =====================================================================================
+// Tawarruq (individual). Buy a commodity on credit -> take possession -> sell to an INDEPENDENT
+// third party for spot cash -> repay the deferred price. The constructor forbids the spot buyer
+// being the financier (the on-chain 'inah guard). No oracle.
+// =====================================================================================
+
+fn tawarruq_field(spec: &Spec, block: &str, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == block)
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_tawarruq(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let credit = tawarruq_field(spec, "credit_purchase", "price");
+    let spot = tawarruq_field(spec, "spot_sale", "price");
+    let mut s = provenance_doc(spec, &format!("{} — tawarruq (individual: credit buy, possess, sell to a third party) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(TAWARRUQ_BODY);
+    s.push_str("}\n");
+    let test_js = gen_tawarruq_test(&name, credit, spot);
+    let descriptor = tawarruq_descriptor(&name, credit, spot);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const TAWARRUQ_BODY: &str = r#"    address public immutable customer;     // al-mustawriq (needs cash)
+    address public immutable financier;    // sells the commodity on credit
+    address public immutable thirdParty;   // independent spot buyer
+    uint256 public immutable creditPrice;  // deferred price owed to the financier
+    uint256 public immutable spotPrice;    // spot cash from the third party
+
+    bool public bought;
+    bool public possessed;
+    bool public sold;
+    uint256 public repaid;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyCustomer() { require(msg.sender == customer, "only customer"); _; }
+    modifier onlyThirdParty() { require(msg.sender == thirdParty, "only third party"); _; }
+
+    event BoughtOnCredit(uint256 price);
+    event PossessionTaken();
+    event SoldSpot(uint256 cash);
+    event Repaid(uint256 amount, uint256 repaid, uint256 creditPrice);
+    event Settled();
+
+    /// @dev INVARIANT onward_to_third_party: the spot buyer must NOT be the credit seller —
+    ///      selling back to the financier is bay' al-'inah; an arranged ring is tawarruq munazzam.
+    constructor(address _financier, address _thirdParty, uint256 _creditPrice, uint256 _spotPrice) {
+        require(_financier != address(0) && _thirdParty != address(0), "zero addr");
+        require(_financier != _thirdParty, "spot buyer must differ from the credit seller (else 'inah)");
+        require(_financier != msg.sender && _thirdParty != msg.sender, "distinct parties");
+        require(_creditPrice > 0 && _spotPrice > 0, "prices");
+        customer = msg.sender; financier = _financier; thirdParty = _thirdParty;
+        creditPrice = _creditPrice; spotPrice = _spotPrice;
+    }
+
+    function buyOnCredit() external onlyCustomer {
+        require(!bought, "already bought");
+        bought = true; emit BoughtOnCredit(creditPrice);
+    }
+
+    /// @dev INVARIANT possession_before_resale: qabd before the onward sale.
+    function takePossession() external onlyCustomer {
+        require(bought, "not bought");
+        require(!possessed, "already possessed");
+        possessed = true; emit PossessionTaken();
+    }
+
+    /// @dev the onward sale: an INDEPENDENT third party pays the customer spot cash for the commodity.
+    function sellSpot() external payable onlyThirdParty nonReentrant {
+        require(possessed, "must take possession (qabd) before reselling");
+        require(!sold, "already sold");
+        require(msg.value == spotPrice, "exact spot price");
+        sold = true;
+        (bool ok, ) = customer.call{value: msg.value}(""); require(ok, "cash to customer");
+        emit SoldSpot(msg.value);
+    }
+
+    /// @dev the customer repays the DEFERRED price to the financier — never more than agreed.
+    function repayDeferred() external payable onlyCustomer nonReentrant {
+        require(sold, "not sold yet");
+        require(!settled, "already settled");
+        require(msg.value > 0, "no payment");
+        require(repaid + msg.value <= creditPrice, "would exceed the deferred price");
+        repaid += msg.value;
+        (bool ok, ) = financier.call{value: msg.value}(""); require(ok, "repay financier");
+        emit Repaid(msg.value, repaid, creditPrice);
+        if (repaid == creditPrice) { settled = true; emit Settled(); }
+    }
+"#;
+
+fn gen_tawarruq_test(name: &str, credit: u64, spot: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Tawarruq (individual). Proves the licit form: possession before the
+// onward sale, the spot buyer is an INDEPENDENT third party (the 'inah ring cannot deploy), and
+// the deferred debt can never be charged above the agreed price.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — tawarruq (individual)", function () {{
+  let customer, financier, thirdParty, c;
+  const CREDIT = {credit}n, SPOT = {spot}n;
+
+  beforeEach(async function () {{
+    [customer, financier, thirdParty] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(customer).deploy(financier.address, thirdParty.address, CREDIT, SPOT);
+    await c.waitForDeployment();
+  }});
+
+  it("onward_to_third_party: a ring where the spot buyer IS the financier cannot deploy ('inah)", async function () {{
+    const F = await ethers.getContractFactory("{name}");
+    await expect(F.connect(customer).deploy(financier.address, financier.address, CREDIT, SPOT)).to.be.revertedWith("spot buyer must differ from the credit seller (else 'inah)");
+  }});
+
+  it("possession_before_resale: cannot sell before taking possession (qabd)", async function () {{
+    await c.connect(customer).buyOnCredit();
+    await expect(c.connect(thirdParty).sellSpot({{ value: SPOT }})).to.be.revertedWith("must take possession (qabd) before reselling");
+  }});
+
+  it("full lifecycle: buy on credit -> possess -> third party buys spot -> repay deferred -> settle", async function () {{
+    await c.connect(customer).buyOnCredit();
+    await c.connect(customer).takePossession();
+    await expect(c.connect(thirdParty).sellSpot({{ value: SPOT }})).to.emit(c, "SoldSpot").withArgs(SPOT);
+    await expect(c.connect(customer).repayDeferred({{ value: CREDIT }})).to.emit(c, "Settled");
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("the deferred debt can never be charged above the agreed price", async function () {{
+    await c.connect(customer).buyOnCredit();
+    await c.connect(customer).takePossession();
+    await c.connect(thirdParty).sellSpot({{ value: SPOT }});
+    await expect(c.connect(customer).repayDeferred({{ value: CREDIT + 1n }})).to.be.revertedWith("would exceed the deferred price");
+  }});
+
+  it("only the independent third party may buy the commodity spot", async function () {{
+    await c.connect(customer).buyOnCredit();
+    await c.connect(customer).takePossession();
+    await expect(c.connect(customer).sellSpot({{ value: SPOT }})).to.be.revertedWith("only third party");
+  }});
+}});
+"#,
+        name = name,
+        credit = credit,
+        spot = spot,
+    )
+}
+
+fn tawarruq_descriptor(name: &str, credit: u64, spot: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "tawarruq",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "mustawriq",
+  "oracle": null,
+  "constructorAbi": ["address","address","uint256","uint256"],
+  "constructorArgs": ["@financier", "@third_party", {credit}, {spot}],
+  "accounts": ["financier","third_party"],
+  "lifecycle": [
+    {{ "as": "mustawriq", "fn": "buyOnCredit", "note": "buy the commodity from the financier, deferred" }},
+    {{ "as": "mustawriq", "fn": "takePossession", "note": "take possession (qabd)" }},
+    {{ "as": "third_party", "fn": "sellSpot", "value": {spot}, "note": "independent third party buys spot; customer gets cash" }},
+    {{ "as": "mustawriq", "fn": "repayDeferred", "value": {credit}, "note": "repay the deferred price to the financier" }}
+  ],
+  "reads": ["sold","repaid","settled"]
+}}
+"#,
+        name = name,
+        credit = credit,
+        spot = spot,
     )
 }
 

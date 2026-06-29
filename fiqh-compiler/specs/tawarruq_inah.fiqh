@@ -1,0 +1,45 @@
+// NEGATIVE CONTROL — organized tawarruq (munazzam) collapsed into 'inah. Two faults:
+//   (1) spot_sale.buyer: financier — the commodity is sold back to the original seller, a ring =
+//       bay' al-'inah -> TAWARRUQ-1.
+//   (2) spot_sale.arranged_by: financier — the financier organizes the onward sale = tawarruq
+//       munazzam, forbidden by OIC Res. 179 -> TAWARRUQ-3.
+// The compiler must REFUSE and emit no .sol. (The cyclic form is ALSO caught by the composite
+// asset-flow checker, on a `bundle`.) Allahu a'lam.
+
+instrument TawarruqInah : tawarruq {
+  meta {
+    basis: "organized tawarruq sold back to the financier — 'inah + munazzam";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    customer  : mustawriq;
+    bank      : financier;
+    market    : third_party;
+  }
+
+  returns {
+    credit_purchase {
+      asset:   metal;
+      price:   1100;
+      payment: deferred;
+    }
+    spot_sale {
+      asset:       metal;
+      price:       1000;
+      buyer:       financier;  // TAWARRUQ-1: sold back to the seller = 'inah
+      arranged_by: financier;  // TAWARRUQ-3: arranged by the financier = munazzam
+    }
+  }
+
+  invariant onward_to_third_party    { spot_sale.buyer == third_party }
+  invariant possession_before_resale { possession == required }
+  invariant not_organized            { spot_sale.arranged_by == customer }
+
+  lifecycle {
+    buyOnCredit;
+    takePossession;
+    sellSpot;
+    repayDeferred;
+  }
+}

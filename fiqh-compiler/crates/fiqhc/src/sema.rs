@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_TAWARRUQ: &str = "tawarruq: the individual (fardī/classical) form is permitted by the majority — buy a commodity on credit, take possession, then sell it to a THIRD party for spot cash; but selling back to the original seller is bayʿ al-ʿīnah, and ORGANIZED tawarruq (munaẓẓam, where the financier arranges the onward sale into a ring) was forbidden by the OIC International Islamic Fiqh Academy Resolution 179 (19/5), 2009 [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +73,7 @@ pub enum Class {
     Salam,
     Istisna,
     Sarf,
+    Tawarruq,
     CommercialEscrow,
     Unknown(String),
 }
@@ -86,6 +88,7 @@ impl Class {
             "salam" => Class::Salam,
             "istisna" => Class::Istisna,
             "sarf" => Class::Sarf,
+            "tawarruq" => Class::Tawarruq,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -164,6 +167,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Salam => check_salam(spec, &mut d),
         Class::Istisna => check_istisna(spec, &mut d),
         Class::Sarf => check_sarf(spec, &mut d),
+        Class::Tawarruq => check_tawarruq(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1056,6 +1060,80 @@ fn check_sarf(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["spot_settlement", "riba_fadl_guarded"], d);
+}
+
+// --- Tawarruq (individual / classical) ---
+//
+// Individual tawarruq is permitted: buy a commodity on credit, TAKE POSSESSION, then sell it to
+// an INDEPENDENT third party for spot cash. Two collapses are forbidden and the engine guards
+// both: selling back to the original seller is bayʿ al-ʿīnah (TAWARRUQ-1), and a sale the
+// FINANCIER arranges is organized tawarruq munaẓẓam (TAWARRUQ-3, OIC Res. 179). The cyclic forms
+// are also caught topologically by the composite checker; here we keep the licit form licit.
+fn check_tawarruq(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let cust = role_party(spec, "mustawriq").map(|p| p.name.clone());
+    let fin = role_party(spec, "financier").map(|p| p.name.clone());
+    let third = role_party(spec, "third_party").map(|p| p.name.clone());
+    if cust.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "tawarruq requires a party with role 'mustawriq' (the one seeking cash)", C_TAWARRUQ));
+    }
+    if fin.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "tawarruq requires a party with role 'financier' (the credit seller of the commodity)", C_TAWARRUQ));
+    }
+    if third.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "tawarruq requires a party with role 'third_party' (the independent spot buyer)", C_TAWARRUQ));
+    }
+    // the spot buyer must differ from the financier — else it is a ring back to the seller ('inah).
+    if let (Some(f), Some(t)) = (&fin, &third) {
+        if f == t {
+            d.push(Diagnostic::error("TAWARRUQ-1", spec.span, "the third-party spot buyer is the same as the credit seller — selling back to the seller is bayʿ al-ʿīnah", C_TAWARRUQ));
+        }
+    }
+
+    match find_return(spec, "spot_sale") {
+        None => d.push(Diagnostic::error(
+            "TAWARRUQ-1",
+            spec.span,
+            "tawarruq requires returns { spot_sale { buyer; arranged_by; price } } — the onward sale to a third party",
+            C_TAWARRUQ,
+        )),
+        Some(ss) => {
+            // TAWARRUQ-1: the onward buyer must be the third party, never the financier.
+            match ret_kv(ss, "buyer").and_then(|kv| kv.val.as_ident()) {
+                Some(b) => {
+                    let is_fin = Some(b) == fin.as_deref() || b == "financier";
+                    let is_third = Some(b) == third.as_deref() || b == "third_party";
+                    if is_fin {
+                        d.push(Diagnostic::error("TAWARRUQ-1", ss.span, "the onward sale names the financier as buyer — selling back to the seller is bayʿ al-ʿīnah", C_TAWARRUQ));
+                    } else if !is_third {
+                        d.push(Diagnostic::error("TAWARRUQ-1", ss.span, format!("the onward sale buyer '{}' is not the declared independent third party", b), C_TAWARRUQ));
+                    }
+                }
+                None => d.push(Diagnostic::error("TAWARRUQ-1", ss.span, "spot_sale must name the buyer (the independent third party)", C_TAWARRUQ)),
+            }
+            // TAWARRUQ-3: the onward sale must NOT be arranged by the financier (tawarruq munaẓẓam).
+            match ret_kv(ss, "arranged_by").and_then(|kv| kv.val.as_ident()) {
+                Some(a) if Some(a) == fin.as_deref() || a == "financier" => d.push(Diagnostic::error(
+                    "TAWARRUQ-3",
+                    ss.span,
+                    "the onward sale is arranged by the financier — that is organized tawarruq (munaẓẓam), forbidden by OIC Fiqh Academy Res. 179 (19/5)",
+                    C_TAWARRUQ,
+                )),
+                _ => {}
+            }
+        }
+    }
+
+    // TAWARRUQ-2 (qabd): possession must precede the onward sale.
+    let lc = spec.lifecycle();
+    let poss = lc.iter().position(|s| s.name == "takePossession");
+    let sell = lc.iter().position(|s| s.name == "sellSpot");
+    match (poss, sell) {
+        (Some(p), Some(s)) if p < s => {}
+        (None, _) => d.push(Diagnostic::error("TAWARRUQ-2", spec.span, "tawarruq requires a 'takePossession' step — the mutawarriq must possess (qabd) the commodity before reselling it", C_TAWARRUQ)),
+        _ => d.push(Diagnostic::error("TAWARRUQ-2", spec.span, "in tawarruq 'takePossession' (qabd) must precede 'sellSpot'", C_TAWARRUQ)),
+    }
+
+    require_invariants(spec, &["onward_to_third_party", "possession_before_resale", "not_organized"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

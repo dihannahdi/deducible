@@ -1,0 +1,44 @@
+// Tawarruq (individual / classical). The mustawriq, needing cash, buys a commodity on credit from
+// the financier, TAKES POSSESSION, then sells it to an INDEPENDENT third party for spot cash, and
+// repays the deferred price over time. The majority permit this individual form. Two collapses are
+// forbidden — selling back to the financier is bay' al-'inah, and a sale the financier arranges is
+// organized tawarruq (munazzam, forbidden by OIC Res. 179). The cyclic forms are also caught
+// topologically by the composite checker; this models the LICIT form. Citations [scholar-verify].
+
+instrument Tawarruq : tawarruq {
+  meta {
+    basis: "tawarruq fardi (individual); OIC Fiqh Academy Res. 179 (19/5) forbids organized tawarruq";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    customer  : mustawriq;     // needs cash
+    bank      : financier;     // sells the commodity on credit (deferred)
+    market    : third_party;   // independent spot buyer
+  }
+
+  returns {
+    credit_purchase {
+      asset:   metal;
+      price:   1100;       // deferred price owed to the financier
+      payment: deferred;
+    }
+    spot_sale {
+      asset:       metal;
+      price:       1000;        // spot cash from the third party
+      buyer:       third_party; // NOT the financier (else 'inah)
+      arranged_by: customer;    // the mustawriq arranges it, not the financier (else munazzam)
+    }
+  }
+
+  invariant onward_to_third_party    { spot_sale.buyer == third_party }
+  invariant possession_before_resale { possession == required }
+  invariant not_organized            { spot_sale.arranged_by == customer }
+
+  lifecycle {
+    buyOnCredit;     // customer buys the commodity from the financier, deferred
+    takePossession;  // customer takes possession (qabd)
+    sellSpot;        // customer sells to the independent third party for cash
+    repayDeferred;   // customer repays the deferred price to the financier
+  }
+}
