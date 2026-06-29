@@ -22,6 +22,9 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_WAQF: &str = "waqf (endowment): the Prophet ﷺ advised ʿUmar concerning his land at Khaybar to 'withhold its corpus and give its fruit in charity' (ḥabbis aṣlahā wa sabbil thamaratahā — Sahih al-Bukhari, Sahih Muslim); the corpus (aṣl) is perpetually inalienable — not sold, gifted, or inherited — and only its income (ghalla) is spent on the declared beneficiaries [scholar-verify]";
+const C_HIBAH: &str = "hibah (gift): a gratuitous transfer completed by possession (qabḍ); the Prophet ﷺ gave and accepted gifts, and warned against taking back a gift ('the one who takes back his gift is like the dog that returns to its vomit' — Sahih al-Bukhari, Sahih Muslim). A gift made for a return (ʿiwaḍ) is in truth a sale; a true hibah has no consideration [scholar-verify]";
+const C_WASIYYA: &str = "waṣiyya (bequest): capped at ONE-THIRD of the estate — the Prophet ﷺ told Saʿd b. Abi Waqqaṣ 'the third, and the third is much' (Sahih al-Bukhari, Sahih Muslim); and 'there is no bequest to an heir' (Sunan Abi Dawud, al-Tirmidhi — the fixed shares already provide for heirs), save with the other heirs' consent [scholar-verify]";
 const C_TAKAFUL: &str = "takāful (taʿāwunī / cooperative): the participants DONATE (tabarruʿ) into a mutual fund from which claims are paid, and the surplus belongs to the participants. The OIC International Islamic Fiqh Academy and AAOIFI hold COMMERCIAL insurance impermissible — selling risk-cover for a premium-for-profit combines gharar, maysir, and riba — and approve the cooperative model instead [scholar-verify]";
 const C_SUKUK: &str = "ṣukūk (investment certificates): AAOIFI Shari'ah Standard No. 17; each ṣakk is an UNDIVIDED OWNERSHIP share in a real asset / usufruct / venture, NOT a debt — the holder's return is the asset's rental or profit distributed PRO-RATA, and the holder bears the asset's risk; a ṣukūk that guarantees the principal plus a fixed return is a bond (riba), not ṣukūk [scholar-verify]";
 const C_POOL: &str = "a multilateral participant pool — the participants' shares must total the whole (10000 bps) and there must be at least two of them [scholar-verify]";
@@ -101,6 +104,9 @@ pub enum Class {
     Sukuk,
     Takaful,
     MudarabahPool,
+    Waqf,
+    Hibah,
+    Wasiyya,
     CommercialEscrow,
     Unknown(String),
 }
@@ -130,6 +136,9 @@ impl Class {
             "sukuk" => Class::Sukuk,
             "takaful" => Class::Takaful,
             "mudarabah_pool" => Class::MudarabahPool,
+            "waqf" => Class::Waqf,
+            "hibah" => Class::Hibah,
+            "wasiyya" => Class::Wasiyya,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -224,6 +233,9 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Sukuk => check_sukuk(spec, &mut d),
         Class::Takaful => check_takaful(spec, &mut d),
         Class::MudarabahPool => check_mudarabah_pool(spec, &mut d),
+        Class::Waqf => check_waqf(spec, &mut d),
+        Class::Hibah => check_hibah(spec, &mut d),
+        Class::Wasiyya => check_wasiyya(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1555,6 +1567,107 @@ fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
+}
+
+// --- Waqf (endowment) ---
+//
+// The corpus (asl) is perpetually inalienable — never sold, gifted, or inherited (WAQF-1); only
+// the income (ghalla) is distributed to the beneficiaries (WAQF-2). The social-economy machinery.
+fn check_waqf(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if role_party(spec, "waqif").is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "waqf requires a party with role 'waqif' (the endower)", C_WAQF));
+    }
+    if role_party(spec, "beneficiary").is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "waqf requires a party with role 'beneficiary' (mawquf ʿalayh)", C_WAQF));
+    }
+    match find_return(spec, "endowment") {
+        None => d.push(Diagnostic::error("WAQF-1", spec.span, "waqf requires returns { endowment { corpus; distribution } }", C_WAQF)),
+        Some(e) => {
+            match kv_get(&e.kvs, "corpus").and_then(|x| x.as_ident()) {
+                Some("inalienable") => {}
+                Some(other) => d.push(Diagnostic::error("WAQF-1", e.span, format!("corpus is '{}'; a waqf's corpus (aṣl) is perpetually inalienable — it may not be sold, gifted, or inherited", other), C_WAQF)),
+                None => d.push(Diagnostic::error("WAQF-1", e.span, "waqf must declare corpus: inalienable", C_WAQF)),
+            }
+            match kv_get(&e.kvs, "distribution").and_then(|x| x.as_ident()) {
+                Some("income_only") => {}
+                Some(other) => d.push(Diagnostic::error("WAQF-2", e.span, format!("distribution is '{}'; only the income (ghalla) of a waqf is distributed — the corpus is preserved", other), C_WAQF)),
+                None => d.push(Diagnostic::error("WAQF-2", e.span, "waqf must declare distribution: income_only", C_WAQF)),
+            }
+        }
+    }
+    require_invariants(spec, &["corpus_inalienable", "income_only"], d);
+}
+
+// --- Hibah (gift) ---
+//
+// A gratuitous transfer: immediate/irrevocable, completed by possession (HIBAH-1), with no
+// consideration (HIBAH-2 — a gift for a return is a sale, not a gift).
+fn check_hibah(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let donor = role_party(spec, "donor").map(|p| p.name.clone());
+    let donee = role_party(spec, "donee").map(|p| p.name.clone());
+    if donor.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "hibah requires a party with role 'donor'", C_HIBAH));
+    }
+    if donee.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "hibah requires a party with role 'donee'", C_HIBAH));
+    }
+    if let (Some(a), Some(b)) = (&donor, &donee) {
+        if a == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "donor and donee must be distinct parties", C_HIBAH));
+        }
+    }
+    match find_return(spec, "gift") {
+        None => d.push(Diagnostic::error("HIBAH-1", spec.span, "hibah requires returns { gift { transfer; consideration } }", C_HIBAH)),
+        Some(g) => {
+            match kv_get(&g.kvs, "transfer").and_then(|x| x.as_ident()) {
+                Some("immediate") | Some("irrevocable") => {}
+                Some(other) => d.push(Diagnostic::error("HIBAH-1", g.span, format!("transfer is '{}'; a hibah is completed by possession at once (immediate/irrevocable)", other), C_HIBAH)),
+                None => d.push(Diagnostic::error("HIBAH-1", g.span, "hibah must declare transfer: immediate", C_HIBAH)),
+            }
+            match kv_get(&g.kvs, "consideration").and_then(|x| x.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("HIBAH-2", g.span, format!("consideration is '{}'; a gift made for a return (ʿiwaḍ) is a sale, not a hibah", other), C_HIBAH)),
+                None => d.push(Diagnostic::error("HIBAH-2", g.span, "hibah must declare consideration: none", C_HIBAH)),
+            }
+        }
+    }
+    require_invariants(spec, &["immediate_transfer", "no_consideration"], d);
+}
+
+// --- Wasiyya (bequest) ---
+//
+// A bequest is capped at ONE-THIRD of the estate (WASIYYA-1 — 'the third, and the third is much')
+// and may NOT be made to an heir (WASIYYA-2 — 'no bequest to an heir', the fixed shares provide).
+fn check_wasiyya(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let testator = role_party(spec, "testator").map(|p| p.name.clone());
+    let legatee = role_party(spec, "legatee").map(|p| p.name.clone());
+    if testator.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wasiyya requires a party with role 'testator'", C_WASIYYA));
+    }
+    if legatee.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "wasiyya requires a party with role 'legatee'", C_WASIYYA));
+    }
+    if let (Some(a), Some(b)) = (&testator, &legatee) {
+        if a == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "testator and legatee must be distinct parties", C_WASIYYA));
+        }
+    }
+    match find_return(spec, "bequest") {
+        None => d.push(Diagnostic::error("WASIYYA-1", spec.span, "wasiyya requires returns { bequest { share_bps; beneficiary } }", C_WASIYYA)),
+        Some(b) => {
+            match kv_get(&b.kvs, "share_bps").and_then(|x| x.as_num()) {
+                Some(n) if n > 0 && n <= 3333 => {}
+                Some(n) => d.push(Diagnostic::error("WASIYYA-1", b.span, format!("the bequest is {} bps; a waṣiyya may not exceed one-third (3333 bps) of the estate without the heirs' consent", n), C_WASIYYA)),
+                None => d.push(Diagnostic::error("WASIYYA-1", b.span, "wasiyya must declare share_bps (<= 3333, one-third)", C_WASIYYA)),
+            }
+            match kv_get(&b.kvs, "beneficiary").and_then(|x| x.as_ident()) {
+                Some("non_heir") => {}
+                Some(other) => d.push(Diagnostic::error("WASIYYA-2", b.span, format!("beneficiary is '{}'; there is no bequest to an heir (the fixed shares already provide for heirs)", other), C_WASIYYA)),
+                None => d.push(Diagnostic::error("WASIYYA-2", b.span, "wasiyya must declare beneficiary: non_heir", C_WASIYYA)),
+            }
+        }
+    }
+    require_invariants(spec, &["within_one_third", "not_to_heir"], d);
 }
 
 // --- Multilateral participant pool (sukuk holders / takaful participants / mudarabah rabbs) ---

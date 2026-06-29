@@ -1,0 +1,28 @@
+// Hibah (gift). A gratuitous transfer, immediate and completed by possession, with no consideration
+// — a gift made for a return is in truth a sale. Citations [scholar-verify].
+
+instrument Hibah : hibah {
+  meta {
+    basis: "hibah: the Prophet gave and accepted gifts; a gift completed by qabd (Bukhari/Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    donor : donor;
+    donee : donee;
+  }
+
+  returns {
+    gift {
+      transfer:      immediate;  // completed by possession at once
+      consideration: none;       // no return; a gift for a return is a sale
+    }
+  }
+
+  invariant immediate_transfer { gift.transfer == immediate }
+  invariant no_consideration   { gift.consideration == none }
+
+  lifecycle {
+    give;   // donor transfers the gift to the donee
+  }
+}

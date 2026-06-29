@@ -1,0 +1,29 @@
+// Wasiyya (bequest). Capped at one-third of the estate, to a non-heir (the fixed shares already
+// provide for heirs). Citations [scholar-verify].
+
+instrument Wasiyya : wasiyya {
+  meta {
+    basis: "wasiyya: 'the third, and the third is much' (Sa'd b. Abi Waqqas); no bequest to an heir";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    testator : testator;
+    legatee  : legatee;
+  }
+
+  returns {
+    bequest {
+      share_bps:   3000;       // <= 1/3 (3333 bps)
+      beneficiary: non_heir;   // a bequest to an heir is void without the heirs' consent
+    }
+  }
+
+  invariant within_one_third { bequest.share_bps != 0 }
+  invariant not_to_heir      { bequest.beneficiary == non_heir }
+
+  lifecycle {
+    bequeath;
+    execute;
+  }
+}

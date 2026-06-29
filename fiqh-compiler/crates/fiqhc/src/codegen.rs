@@ -42,6 +42,9 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Sukuk => gen_sukuk(spec),
         Class::Takaful => gen_takaful(spec),
         Class::MudarabahPool => gen_mudarabah_pool(spec),
+        Class::Waqf => gen_waqf(spec),
+        Class::Hibah => gen_hibah(spec),
+        Class::Wasiyya => gen_wasiyya(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -159,6 +162,17 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RISK-2", "risk.loss", "eq", json!("on_capital_pool"), "loss on the rabb al-mal pool pro-rata [scholar-verify]");
             add("PROFIT-1", "returns.profit.split", "eq", json!("ratio"), "profit by a pre-agreed ratio [scholar-verify]");
         }
+        Class::Waqf => {
+            add("WAQF-1", "returns.endowment.corpus", "eq", json!("inalienable"), "the corpus is perpetually inalienable; Umar's Khaybar waqf [scholar-verify]");
+            add("WAQF-2", "returns.endowment.distribution", "eq", json!("income_only"), "only the income (ghalla) is distributed [scholar-verify]");
+        }
+        Class::Hibah => {
+            add("HIBAH-1", "returns.gift.transfer", "eq", json!("immediate"), "a hibah is completed by possession at once [scholar-verify]");
+            add("HIBAH-2", "returns.gift.consideration", "eq", json!("none"), "a gift for a return is a sale, not a hibah [scholar-verify]");
+        }
+        Class::Wasiyya => {
+            add("WASIYYA-2", "returns.bequest.beneficiary", "eq", json!("non_heir"), "no bequest to an heir [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -193,6 +207,9 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Sukuk => vec!["issuer", "holder"],
         Class::Takaful => vec!["operator", "participant"],
         Class::MudarabahPool => vec!["mudarib", "rabb_al_mal"],
+        Class::Waqf => vec!["waqif", "beneficiary"],
+        Class::Hibah => vec!["donor", "donee"],
+        Class::Wasiyya => vec!["testator", "legatee"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -4194,6 +4211,315 @@ describe("{name} (fiqhc-generated) — mudarabah pool", function () {{
         shares_js = shares_js,
         mudarib_bps = mudarib_bps,
         n = n,
+    )
+}
+
+// =====================================================================================
+// Waqf (endowment). The corpus is escrowed and LOCKED forever (no withdraw path = inalienable);
+// only income sent to distributeIncome reaches the beneficiary. No oracle.
+// =====================================================================================
+
+fn gen_waqf(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let mut s = provenance_doc(spec, &format!("{} — waqf (endowment; corpus inalienable) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(WAQF_BODY);
+    s.push_str("}\n");
+    let test_js = gen_waqf_test(&name);
+    let descriptor = waqf_descriptor(&name);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const WAQF_BODY: &str = r#"    address public immutable waqif;
+    address public immutable beneficiary;
+    address public immutable nazir;
+    uint256 public corpus;   // escrowed and LOCKED — there is no withdrawal path (inalienable)
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyWaqif() { require(msg.sender == waqif, "only waqif"); _; }
+    modifier onlyNazir() { require(msg.sender == nazir, "only nazir"); _; }
+
+    event Endowed(uint256 corpus);
+    event IncomeDistributed(uint256 amount);
+
+    constructor(address _beneficiary, address _nazir) {
+        require(_beneficiary != address(0) && _nazir != address(0), "zero addr");
+        waqif = msg.sender; beneficiary = _beneficiary; nazir = _nazir;
+    }
+
+    /// @dev INVARIANT corpus_inalienable: the corpus is locked here forever — NO function ever
+    ///      transfers it out (it is neither sold, gifted, nor inherited).
+    function endow() external payable onlyWaqif {
+        require(corpus == 0, "already endowed");
+        require(msg.value > 0, "no corpus");
+        corpus = msg.value; emit Endowed(corpus);
+    }
+
+    /// @dev INVARIANT income_only: only the income remitted here reaches the beneficiary; the
+    ///      corpus is never touched.
+    function distributeIncome() external payable onlyNazir nonReentrant {
+        require(corpus > 0, "not endowed");
+        require(msg.value > 0, "no income");
+        (bool ok, ) = beneficiary.call{value: msg.value}(""); require(ok, "income to beneficiary");
+        emit IncomeDistributed(msg.value);
+    }
+"#;
+
+fn gen_waqf_test(name: &str) -> String {
+    format!(
+        r#"// Generated by fiqhc — Waqf (endowment). Proves the corpus is locked (inalienable) while income
+// flows to the beneficiary.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — waqf", function () {{
+  let waqif, beneficiary, nazir, c;
+  const CORPUS = 1000000n, INCOME = 50000n;
+
+  beforeEach(async function () {{
+    [waqif, beneficiary, nazir] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(waqif).deploy(beneficiary.address, nazir.address);
+    await c.waitForDeployment();
+  }});
+
+  it("income_only: income reaches the beneficiary; the corpus stays locked", async function () {{
+    await c.connect(waqif).endow({{ value: CORPUS }});
+    await expect(c.connect(nazir).distributeIncome({{ value: INCOME }})).to.emit(c, "IncomeDistributed").withArgs(INCOME);
+    expect(await ethers.provider.getBalance(await c.getAddress())).to.equal(CORPUS); // corpus untouched
+  }});
+
+  it("corpus_inalienable: only the nazir distributes; there is no corpus withdrawal", async function () {{
+    await c.connect(waqif).endow({{ value: CORPUS }});
+    await expect(c.connect(waqif).distributeIncome({{ value: INCOME }})).to.be.revertedWith("only nazir");
+  }});
+}});
+"#,
+        name = name,
+    )
+}
+
+fn waqf_descriptor(name: &str) -> String {
+    format!(
+        r#"{{
+  "instrument": "waqf",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "waqif",
+  "oracle": null,
+  "constructorAbi": ["address","address"],
+  "constructorArgs": ["@beneficiary","@nazir"],
+  "accounts": ["beneficiary","nazir"],
+  "lifecycle": [
+    {{ "as": "waqif", "fn": "endow", "value": 1000000, "note": "lock the corpus (inalienable)" }},
+    {{ "as": "nazir", "fn": "distributeIncome", "value": 50000, "note": "income to the beneficiary; corpus preserved" }}
+  ],
+  "reads": ["corpus"]
+}}
+"#,
+        name = name,
+    )
+}
+
+// =====================================================================================
+// Hibah (gift). Immediate, irrevocable, no consideration. No oracle.
+// =====================================================================================
+
+fn gen_hibah(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let mut s = provenance_doc(spec, &format!("{} — hibah (gratuitous gift) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(HIBAH_BODY);
+    s.push_str("}\n");
+    let test_js = gen_hibah_test(&name);
+    let descriptor = hibah_descriptor(&name);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const HIBAH_BODY: &str = r#"    address public immutable donor;
+    address public immutable donee;
+    bool public given;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyDonor() { require(msg.sender == donor, "only donor"); _; }
+
+    event Gifted(uint256 amount);
+
+    constructor(address _donee) {
+        require(_donee != address(0), "zero addr");
+        require(_donee != msg.sender, "donor and donee must be distinct");
+        donor = msg.sender; donee = _donee;
+    }
+
+    /// @dev INVARIANT immediate_transfer + no_consideration: the gift transfers to the donee at once,
+    ///      and the donee owes nothing in return (there is no consideration path).
+    function give() external payable onlyDonor nonReentrant {
+        require(!given, "already given");
+        require(msg.value > 0, "no gift");
+        given = true;
+        (bool ok, ) = donee.call{value: msg.value}(""); require(ok, "gift to donee");
+        emit Gifted(msg.value);
+    }
+"#;
+
+fn gen_hibah_test(name: &str) -> String {
+    format!(
+        r#"// Generated by fiqhc — Hibah (gift). Proves an immediate, gratuitous transfer to the donee.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — hibah", function () {{
+  let donor, donee, c;
+  const AMOUNT = 1000000n;
+
+  beforeEach(async function () {{
+    [donor, donee] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(donor).deploy(donee.address);
+    await c.waitForDeployment();
+  }});
+
+  it("immediate_transfer: the gift goes to the donee at once", async function () {{
+    const before = await ethers.provider.getBalance(donee.address);
+    await c.connect(donor).give({{ value: AMOUNT }});
+    expect(await ethers.provider.getBalance(donee.address) - before).to.equal(AMOUNT);
+  }});
+
+  it("only the donor gives", async function () {{
+    await expect(c.connect(donee).give({{ value: AMOUNT }})).to.be.revertedWith("only donor");
+  }});
+}});
+"#,
+        name = name,
+    )
+}
+
+fn hibah_descriptor(name: &str) -> String {
+    format!(
+        r#"{{
+  "instrument": "hibah",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "donor",
+  "oracle": null,
+  "constructorAbi": ["address"],
+  "constructorArgs": ["@donee"],
+  "accounts": ["donee"],
+  "lifecycle": [
+    {{ "as": "donor", "fn": "give", "value": 1000000, "note": "immediate gratuitous transfer to the donee" }}
+  ],
+  "reads": ["given"]
+}}
+"#,
+        name = name,
+    )
+}
+
+// =====================================================================================
+// Wasiyya (bequest). Capped at one-third (enforced at construction); paid to a non-heir legatee.
+// No oracle.
+// =====================================================================================
+
+fn gen_wasiyya(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let share = spec.returns().into_iter().find(|r| r.kind == "bequest")
+        .and_then(|r| kv_get(&r.kvs, "share_bps")).and_then(|e| e.as_num()).unwrap_or(3000);
+    let mut s = provenance_doc(spec, &format!("{} — wasiyya (bequest, <= 1/3) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(WASIYYA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_wasiyya_test(&name, share);
+    let descriptor = wasiyya_descriptor(&name, share);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const WASIYYA_BODY: &str = r#"    address public immutable testator;
+    address public immutable legatee;
+    uint256 public immutable estate;
+    uint256 public immutable shareBps;
+    uint256 public constant BPS = 10000;
+    bool public executed;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyTestator() { require(msg.sender == testator, "only testator"); _; }
+
+    event Executed(uint256 amount);
+
+    /// @dev INVARIANT within_one_third: the bequest may not exceed one-third (3333 bps) of the estate.
+    constructor(address _legatee, uint256 _estate, uint256 _shareBps) {
+        require(_legatee != address(0), "zero addr");
+        require(_legatee != msg.sender, "testator and legatee must be distinct");
+        require(_estate > 0, "estate");
+        require(_shareBps > 0 && _shareBps <= 3333, "bequest must be <= one-third (3333 bps)");
+        testator = msg.sender; legatee = _legatee; estate = _estate; shareBps = _shareBps;
+    }
+
+    /// @dev the bequest (estate * shareBps / 10000) is paid to the non-heir legatee on execution.
+    function execute() external payable onlyTestator nonReentrant {
+        require(!executed, "already executed");
+        uint256 bequest = (estate * shareBps) / BPS;
+        require(msg.value == bequest, "send exactly the bequest amount");
+        executed = true;
+        (bool ok, ) = legatee.call{value: bequest}(""); require(ok, "bequest to legatee");
+        emit Executed(bequest);
+    }
+"#;
+
+fn gen_wasiyya_test(name: &str, share: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Wasiyya (bequest). Proves the one-third cap is enforced at construction.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — wasiyya", function () {{
+  let testator, legatee, c;
+  const ESTATE = 1000000n, SHARE = {share}n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    [testator, legatee] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(testator).deploy(legatee.address, ESTATE, SHARE);
+    await c.waitForDeployment();
+  }});
+
+  it("the bequest (<= 1/3) is paid to the legatee", async function () {{
+    const bequest = (ESTATE * SHARE) / BPS;
+    await expect(c.connect(testator).execute({{ value: bequest }})).to.emit(c, "Executed").withArgs(bequest);
+  }});
+
+  it("within_one_third: a bequest over one-third cannot deploy", async function () {{
+    const F = await ethers.getContractFactory("{name}");
+    await expect(F.connect(testator).deploy(legatee.address, ESTATE, 4000n)).to.be.revertedWith("bequest must be <= one-third (3333 bps)");
+  }});
+}});
+"#,
+        name = name,
+        share = share,
+    )
+}
+
+fn wasiyya_descriptor(name: &str, share: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "wasiyya",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "testator",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256"],
+  "constructorArgs": ["@legatee", 1000000, {share}],
+  "accounts": ["legatee"],
+  "lifecycle": [
+    {{ "as": "testator", "fn": "execute", "note": "pay the bequest (<= 1/3) to the non-heir legatee" }}
+  ],
+  "reads": ["executed"]
+}}
+"#,
+        name = name,
+        share = share,
     )
 }
 

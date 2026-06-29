@@ -1,0 +1,31 @@
+// NEGATIVE CONTROL — a bequest that overreaches. Two faults:
+//   (1) share_bps: 5000 — exceeds one-third (3333) of the estate -> WASIYYA-1.
+//   (2) beneficiary: heir — a bequest to an heir (void without the heirs' consent) -> WASIYYA-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument WasiyyaRiba : wasiyya {
+  meta {
+    basis: "a bequest exceeding one-third, to an heir";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    testator : testator;
+    legatee  : legatee;
+  }
+
+  returns {
+    bequest {
+      share_bps:   5000;   // WASIYYA-1: exceeds one-third
+      beneficiary: heir;   // WASIYYA-2: a bequest to an heir
+    }
+  }
+
+  invariant within_one_third { bequest.share_bps != 0 }
+  invariant not_to_heir      { bequest.beneficiary == non_heir }
+
+  lifecycle {
+    bequeath;
+    execute;
+  }
+}

@@ -1,0 +1,32 @@
+// NEGATIVE CONTROL — a "waqf" that spends its corpus. Two faults:
+//   (1) corpus: sellable — the corpus is alienable, contradicting perpetuity -> WAQF-1.
+//   (2) distribution: corpus_and_income — the corpus itself is spent down -> WAQF-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument WaqfRiba : waqf {
+  meta {
+    basis: "an endowment that liquidates its own corpus";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    waqif       : waqif;
+    beneficiary : beneficiary;
+    nazir       : nazir;
+  }
+
+  returns {
+    endowment {
+      corpus:       sellable;            // WAQF-1: not inalienable
+      distribution: corpus_and_income;   // WAQF-2: the corpus is spent
+    }
+  }
+
+  invariant corpus_inalienable { endowment.corpus == inalienable }
+  invariant income_only        { endowment.distribution == income_only }
+
+  lifecycle {
+    endow;
+    distributeIncome;
+  }
+}

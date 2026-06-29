@@ -1,0 +1,31 @@
+// Waqf (endowment). The waqif dedicates a corpus (asl) that is perpetually inalienable — never
+// sold, gifted, or inherited — and only its income (ghalla) is distributed to the beneficiaries.
+// Citations [scholar-verify].
+
+instrument Waqf : waqf {
+  meta {
+    basis: "waqf: Umar's Khaybar land — habbis aslaha wa sabbil thamaratiha (Bukhari/Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    waqif       : waqif;
+    beneficiary : beneficiary;
+    nazir       : nazir;
+  }
+
+  returns {
+    endowment {
+      corpus:       inalienable;  // the asl is perpetually preserved
+      distribution: income_only;  // only the income (ghalla) is distributed
+    }
+  }
+
+  invariant corpus_inalienable { endowment.corpus == inalienable }
+  invariant income_only        { endowment.distribution == income_only }
+
+  lifecycle {
+    endow;             // waqif locks the corpus
+    distributeIncome;  // income to the beneficiary; corpus preserved
+  }
+}

@@ -1,0 +1,30 @@
+// NEGATIVE CONTROL — a "gift" that is really a deferred sale. Two faults:
+//   (1) transfer: deferred — not an immediate, possession-completed gift -> HIBAH-1.
+//   (2) consideration: 50000 — a return is owed, so it is a sale, not a hibah -> HIBAH-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument HibahRiba : hibah {
+  meta {
+    basis: "a deferred sale dressed as a gift";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    donor : donor;
+    donee : donee;
+  }
+
+  returns {
+    gift {
+      transfer:      deferred;  // HIBAH-1: not immediate
+      consideration: 50000;     // HIBAH-2: a return is owed
+    }
+  }
+
+  invariant immediate_transfer { gift.transfer == immediate }
+  invariant no_consideration   { gift.consideration == none }
+
+  lifecycle {
+    give;
+  }
+}
