@@ -87,8 +87,10 @@ subprocesses; the on-chain models are faithful proxies, not production custody. 
 institutional, not code, and are stated plainly: (a) every rule module is authoritative only once a
 qualified scholar of that authority/school ratifies it; (b) the chain holds *representations* — legal title
 and real possession (qabḍ) remain an off-chain bridge; (c) the maqāṣid/intent question stays, by design,
-with the human. Live testnet deployment of one representative per family, and the consensus-oracle live
-proof, remain operational follow-ups (faucet-gated).
+with the human. The flagship sale, **murābaḥah, has been proven LIVE on Hedera testnet** — `MurabahahGen`
+at `0.0.9366104` ran its full cost-plus lifecycle on the public network (qabḍ → disclose → sell → the buyer
+paying the fixed deferred total, `settled = true`); a representative of each remaining family follows the
+same one-command path (faucet-gated).
 
 ## 7. Conclusion
 

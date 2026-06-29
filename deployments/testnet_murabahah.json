@@ -1,0 +1,16 @@
+{
+  "instrument": "murabahah",
+  "contract": "MurabahahGen",
+  "contractId": "0.0.9366104",
+  "network": "testnet",
+  "customer": "0.0.9366102",
+  "customerEvm": "0x00000000000000000000000000000000008eea56",
+  "cost": 1000000,
+  "markup": 100000,
+  "total": 1100000,
+  "acquired": true,
+  "sold": true,
+  "paid": 1100000,
+  "settled": true,
+  "note": "Live deploy + full cost-plus lifecycle (qabd -> disclose -> sell -> pay) of a deducible-generated murabaha."
+}
