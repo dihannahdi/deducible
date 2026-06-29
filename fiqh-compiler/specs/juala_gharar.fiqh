@@ -1,0 +1,32 @@
+// NEGATIVE CONTROL — a ju'ala that pays up front for an unknown reward. Two faults:
+//   (1) amount: 0 — an unknown/zero reward is gharar -> JUALA-1.
+//   (2) due: upfront — paying before the result removes the worker's risk and is not ju'ala -> JUALA-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument JualaGharar : juala {
+  meta {
+    basis: "a ju'ala with an unknown reward paid up front";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    offerer : jail;
+    worker  : amil;
+  }
+
+  returns {
+    reward {
+      amount: 0;        // JUALA-1: unknown reward
+      due:    upfront;  // JUALA-2: not due on completion
+    }
+  }
+
+  invariant reward_known      { reward.amount != 0 }
+  invariant due_on_completion { reward.due == on_completion }
+
+  lifecycle {
+    offer;
+    complete;
+    claim;
+  }
+}

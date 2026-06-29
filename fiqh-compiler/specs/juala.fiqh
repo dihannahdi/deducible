@@ -1,0 +1,31 @@
+// Ju'ala (reward / commission for a result). The offerer (ja'il) promises a known reward (ju'l) to
+// whoever achieves a specified result; the worker (amil) is paid only on COMPLETION and bears the
+// risk of non-completion. The reward must be known (ma'lum). Citations [scholar-verify].
+
+instrument Juala : juala {
+  meta {
+    basis: "ju'ala: Yusuf 12:72; AAOIFI Shari'ah Standard No. 15 (Ju'ala)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    offerer : jail;   // al-ja'il
+    worker  : amil;   // al-'amil
+  }
+
+  returns {
+    reward {
+      amount: 100000;       // a known reward (ju'l)
+      due:    on_completion; // payable only when the result is achieved
+    }
+  }
+
+  invariant reward_known      { reward.amount != 0 }
+  invariant due_on_completion { reward.due == on_completion }
+
+  lifecycle {
+    offer;      // ja'il offers the reward for a specified result
+    complete;   // amil achieves the result
+    claim;      // amil claims the known reward on completion
+  }
+}

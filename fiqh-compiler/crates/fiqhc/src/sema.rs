@@ -22,6 +22,8 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_JUALA: &str = "juʿala (reward for a result): Yusuf 12:72 ('and for him who produces it is a camel-load, and I am responsible for it'); AAOIFI Shari'ah Standard No. 15; the reward (juʿl) must be known (maʿlūm), and it is due only on COMPLETION of the specified result — the worker (ʿamil) bears the risk of non-completion [scholar-verify]";
+const C_ARIYAH: &str = "ʿariyya (gratuitous loan of usufruct): a tabarruʿ — the Prophet ﷺ borrowed armour from Ṣafwan as an ʿariyya (Sunan Abi Dawud); it is FREE of charge (a charge would make it ijara), and the SAME asset is returned, since only its usufruct was lent, not its substance [scholar-verify]";
 const C_WAKALA: &str = "wakala (agency): AAOIFI Shari'ah Standard No. 23; the agent (wakil) acts on the principal's account and is a trustee (amīn) — he does NOT guarantee the capital or the profit (a guarantee by the agent converts the agency into a guaranteed loan, i.e. riba); his compensation is a KNOWN fee (ujra), free of gharar. In wakala bi-l-istithmar the realized return belongs to the principal [scholar-verify]";
 const C_WADIA: &str = "wadiʿa (safekeeping deposit): al-Nisaʾ 4:58 ('render the trusts to their owners') and al-Baqarah 2:283; the deposit is a trust (yad amāna) — the custodian is NOT liable for its loss absent taʿaddī (transgression) or taqṣīr (negligence), and may not use it. If the custodian guarantees its return regardless, or uses it, the contract becomes a loan (qarḍ) and any conditioned benefit is riba. A fee for the safekeeping SERVICE itself is permitted (wadiʿa bi-l-ujra) [scholar-verify]";
 const C_HAWALA: &str = "hawala (assignment/transfer of debt): the Prophet ﷺ — 'procrastination by a rich man is injustice; and when one of you is referred to a solvent man, let him follow/accept' (Sahih al-Bukhari, Sahih Muslim). The transfer is for the LIKE of the debt — no increase (an increase would be riba / sale of debt) — and a valid hawala DISCHARGES the original debtor (al-muhil) toward the creditor [scholar-verify]";
@@ -87,6 +89,8 @@ pub enum Class {
     Wadia,
     Wakala,
     Ijarah,
+    Juala,
+    Ariyah,
     CommercialEscrow,
     Unknown(String),
 }
@@ -109,6 +113,8 @@ impl Class {
             "wadia" => Class::Wadia,
             "wakala" => Class::Wakala,
             "ijarah" => Class::Ijarah,
+            "juala" => Class::Juala,
+            "ariyah" => Class::Ariyah,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -196,6 +202,8 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Wadia => check_wadia(spec, &mut d),
         Class::Wakala => check_wakala(spec, &mut d),
         Class::Ijarah => check_ijarah_plain(spec, &mut d),
+        Class::Juala => check_juala(spec, &mut d),
+        Class::Ariyah => check_ariyah(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1527,6 +1535,82 @@ fn check_wakala(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_agent_guarantee", "fee_disclosed"], d);
+}
+
+// --- Ju'ala (reward for a result) ---
+//
+// The offerer (jaʿil) promises a KNOWN reward to whoever achieves a specified result; the worker
+// (ʿamil) is paid only on COMPLETION and bears the risk of non-completion. The reward must be
+// definite (JUALA-1) and due on completion (JUALA-2).
+fn check_juala(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let offerer = role_party(spec, "jail").map(|p| p.name.clone());
+    let worker = role_party(spec, "amil").map(|p| p.name.clone());
+    if offerer.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "juʿala requires a party with role 'jail' (the offerer)", C_JUALA));
+    }
+    if worker.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "juʿala requires a party with role 'amil' (the worker)", C_JUALA));
+    }
+    if let (Some(o), Some(w)) = (&offerer, &worker) {
+        if o == w {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "offerer and worker must be distinct parties", C_JUALA));
+        }
+    }
+
+    match find_return(spec, "reward") {
+        None => d.push(Diagnostic::error("JUALA-1", spec.span, "juʿala requires returns { reward { amount; due } }", C_JUALA)),
+        Some(r) => {
+            match ret_kv(r, "amount").and_then(|kv| kv.val.as_num()) {
+                Some(n) if n > 0 => {}
+                _ => d.push(Diagnostic::error("JUALA-1", r.span, "the juʿl (reward) must be a known, definite sum — an unknown reward is gharar", C_JUALA)),
+            }
+            match ret_kv(r, "due").and_then(|kv| kv.val.as_ident()) {
+                Some("on_completion") => {}
+                Some(other) => d.push(Diagnostic::error("JUALA-2", r.span, format!("the reward is due '{}'; in juʿala it is due only ON COMPLETION of the result (the worker bears non-completion risk)", other), C_JUALA)),
+                None => d.push(Diagnostic::error("JUALA-2", r.span, "juʿala must declare due: on_completion", C_JUALA)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["reward_known", "due_on_completion"], d);
+}
+
+// --- 'Ariyya (gratuitous loan of usufruct) ---
+//
+// A free loan of an asset's usufruct: no charge (ARIYAH-1 — a charge makes it ijara), and the SAME
+// asset is returned (ARIYAH-2 — only the usufruct was lent, not the substance).
+fn check_ariyah(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let lender = role_party(spec, "muir").map(|p| p.name.clone());
+    let borrower = role_party(spec, "mustair").map(|p| p.name.clone());
+    if lender.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "ʿariyya requires a party with role 'muir' (the lender)", C_ARIYAH));
+    }
+    if borrower.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "ʿariyya requires a party with role 'mustair' (the borrower)", C_ARIYAH));
+    }
+    if let (Some(l), Some(b)) = (&lender, &borrower) {
+        if l == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "lender and borrower must be distinct parties", C_ARIYAH));
+        }
+    }
+
+    match find_return(spec, "loan_use") {
+        None => d.push(Diagnostic::error("ARIYAH-1", spec.span, "ʿariyya requires returns { loan_use { fee; return } }", C_ARIYAH)),
+        Some(lu) => {
+            match ret_kv(lu, "fee").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("ARIYAH-1", lu.span, format!("fee is '{}'; ʿariyya is gratuitous — charging for the usufruct makes it an ijara, not an ʿariyya", other), C_ARIYAH)),
+                None => d.push(Diagnostic::error("ARIYAH-1", lu.span, "ʿariyya must declare fee: none (it is a gratuitous loan)", C_ARIYAH)),
+            }
+            match ret_kv(lu, "return").and_then(|kv| kv.val.as_ident()) {
+                Some("same_asset") => {}
+                Some(other) => d.push(Diagnostic::error("ARIYAH-2", lu.span, format!("return is '{}'; in ʿariyya the SAME asset is returned — only its usufruct was lent, not its substance (returning the like would be qarḍ)", other), C_ARIYAH)),
+                None => d.push(Diagnostic::error("ARIYAH-2", lu.span, "ʿariyya must declare return: same_asset", C_ARIYAH)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["gratuitous", "returns_same"], d);
 }
 
 // --- Ijarah (plain operating lease) ---

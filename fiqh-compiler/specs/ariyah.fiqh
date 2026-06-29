@@ -1,0 +1,31 @@
+// 'Ariyya (gratuitous loan of usufruct). The lender (mu'ir) lends an asset's usufruct to the
+// borrower (musta'ir) free of charge; the borrower returns the SAME asset (only its usufruct was
+// lent, not its substance). A charge would make it an ijara; returning the like would make it a
+// qard. Citations [scholar-verify].
+
+instrument Ariyah : ariyah {
+  meta {
+    basis: "'ariyya: a tabarru'; the Prophet borrowed armour from Safwan (Abu Dawud)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lender   : muir;     // al-mu'ir
+    borrower : mustair;  // al-musta'ir
+  }
+
+  returns {
+    loan_use {
+      fee:    none;        // gratuitous — no charge (else it is ijara)
+      return: same_asset;  // the same asset is returned (usufruct was lent, not substance)
+    }
+  }
+
+  invariant gratuitous   { loan_use.fee == none }
+  invariant returns_same { loan_use.return == same_asset }
+
+  lifecycle {
+    lendUse;      // lender lends the usufruct gratis
+    returnAsset;  // borrower returns the same asset
+  }
+}

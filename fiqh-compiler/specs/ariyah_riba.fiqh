@@ -1,0 +1,31 @@
+// NEGATIVE CONTROL — an "'ariyya" that charges a fee and returns the like. Two faults:
+//   (1) fee: 5000 — charging for the usufruct makes it an ijara, not a gratuitous 'ariyya -> ARIYAH-1.
+//   (2) return: like_value — returning the like (not the same asset) makes it a qard -> ARIYAH-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument AriyahRiba : ariyah {
+  meta {
+    basis: "a charged loan returning the like — not an 'ariyya";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    lender   : muir;
+    borrower : mustair;
+  }
+
+  returns {
+    loan_use {
+      fee:    5000;        // ARIYAH-1: a charge => ijara, not 'ariyya
+      return: like_value;  // ARIYAH-2: returning the like => qard, not 'ariyya
+    }
+  }
+
+  invariant gratuitous   { loan_use.fee == none }
+  invariant returns_same { loan_use.return == same_asset }
+
+  lifecycle {
+    lendUse;
+    returnAsset;
+  }
+}

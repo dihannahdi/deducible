@@ -35,6 +35,8 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Wadia => gen_wadia(spec),
         Class::Wakala => gen_wakala(spec),
         Class::Ijarah => gen_ijarah_plain(spec),
+        Class::Juala => gen_juala(spec),
+        Class::Ariyah => gen_ariyah(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -122,6 +124,14 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RISK-3", "risk.loss", "eq", json!("on_lessor"), "the lessor (owner) bears the asset risk; AAOIFI SS 9 [scholar-verify]");
             add("RIBA-3", "returns.rent.late_penalty", "eq", json!("none"), "no interest on a late rent [scholar-verify]");
         }
+        Class::Juala => {
+            add("JUALA-1", "returns.reward.amount", "gt", json!(0), "the reward (juʿl) must be known; AAOIFI SS 15 [scholar-verify]");
+            add("JUALA-2", "returns.reward.due", "eq", json!("on_completion"), "due only on completion; the worker bears non-completion risk [scholar-verify]");
+        }
+        Class::Ariyah => {
+            add("ARIYAH-1", "returns.loan_use.fee", "eq", json!("none"), "ʿariyya is gratuitous (a charge makes it ijara) [scholar-verify]");
+            add("ARIYAH-2", "returns.loan_use.return", "eq", json!("same_asset"), "the same asset returns; only its usufruct was lent [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -149,6 +159,8 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Wadia => vec!["depositor", "custodian"],
         Class::Wakala => vec!["muwakkil", "wakil"],
         Class::Ijarah => vec!["lessor", "lessee"],
+        Class::Juala => vec!["jail", "amil"],
+        Class::Ariyah => vec!["muir", "mustair"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -3291,6 +3303,245 @@ fn ijarah_plain_descriptor(name: &str, rate: u64) -> String {
 "#,
         name = name,
         rate = rate,
+    )
+}
+
+// =====================================================================================
+// Ju'ala (reward for a result). The offerer escrows a known reward; the worker claims it only on
+// completion. No oracle.
+// =====================================================================================
+
+fn reward_amount(spec: &Spec) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "reward")
+        .and_then(|r| kv_get(&r.kvs, "amount"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_juala(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let reward = reward_amount(spec);
+    let mut s = provenance_doc(spec, &format!("{} — ju'ala (reward for a result) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(JUALA_BODY);
+    s.push_str("}\n");
+    let test_js = gen_juala_test(&name, reward);
+    let descriptor = juala_descriptor(&name, reward);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const JUALA_BODY: &str = r#"    address public immutable jail;   // the offerer (al-ja'il)
+    address public immutable amil;   // the worker (al-'amil)
+    uint256 public immutable reward; // the known ju'l
+
+    bool public offered;
+    bool public completed;
+    bool public claimed;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyJail() { require(msg.sender == jail, "only offerer"); _; }
+    modifier onlyAmil() { require(msg.sender == amil, "only worker"); _; }
+
+    event Offered(uint256 reward);
+    event Completed();
+    event RewardClaimed(uint256 reward);
+
+    constructor(address _amil, uint256 _reward) {
+        require(_amil != address(0), "zero addr");
+        require(_amil != msg.sender, "offerer and worker must be distinct");
+        require(_reward > 0, "reward must be known");
+        jail = msg.sender; amil = _amil; reward = _reward;
+    }
+
+    function offer() external payable onlyJail {
+        require(!offered, "already offered");
+        require(msg.value == reward, "escrow exactly the reward");
+        offered = true; emit Offered(reward);
+    }
+
+    function complete() external onlyAmil {
+        require(offered, "no offer");
+        require(!completed, "already completed");
+        completed = true; emit Completed();
+    }
+
+    /// @dev INVARIANT due_on_completion: the worker is paid ONLY after the result is achieved —
+    ///      the worker bears the risk of non-completion (no completion, no reward).
+    function claim() external onlyAmil nonReentrant {
+        require(completed, "reward is due only on completion");
+        require(!claimed, "already claimed");
+        claimed = true;
+        (bool ok, ) = amil.call{value: reward}(""); require(ok, "reward to worker");
+        emit RewardClaimed(reward);
+    }
+"#;
+
+fn gen_juala_test(name: &str, reward: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Ju'ala (reward for a result). Proves the reward is due ONLY on completion.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — ju'ala", function () {{
+  let jail, amil, c;
+  const REWARD = {reward}n;
+
+  beforeEach(async function () {{
+    [jail, amil] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(jail).deploy(amil.address, REWARD);
+    await c.waitForDeployment();
+  }});
+
+  it("due_on_completion: claiming before completion reverts", async function () {{
+    await c.connect(jail).offer({{ value: REWARD }});
+    await expect(c.connect(amil).claim()).to.be.revertedWith("reward is due only on completion");
+  }});
+
+  it("lifecycle: offer -> complete -> claim; the worker receives the known reward", async function () {{
+    await c.connect(jail).offer({{ value: REWARD }});
+    await c.connect(amil).complete();
+    await expect(c.connect(amil).claim()).to.emit(c, "RewardClaimed").withArgs(REWARD);
+  }});
+
+  it("only the worker completes and claims", async function () {{
+    await c.connect(jail).offer({{ value: REWARD }});
+    await expect(c.connect(jail).complete()).to.be.revertedWith("only worker");
+  }});
+}});
+"#,
+        name = name,
+        reward = reward,
+    )
+}
+
+fn juala_descriptor(name: &str, reward: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "juala",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "jail",
+  "oracle": null,
+  "constructorAbi": ["address","uint256"],
+  "constructorArgs": ["@amil", {reward}],
+  "accounts": ["amil"],
+  "lifecycle": [
+    {{ "as": "jail", "fn": "offer", "value": {reward}, "note": "offerer escrows the known reward" }},
+    {{ "as": "amil", "fn": "complete", "note": "worker achieves the result" }},
+    {{ "as": "amil", "fn": "claim", "note": "worker claims the reward on completion" }}
+  ],
+  "reads": ["offered","completed","claimed"]
+}}
+"#,
+        name = name,
+        reward = reward,
+    )
+}
+
+// =====================================================================================
+// 'Ariyya (gratuitous loan of usufruct). No money moves; the SAME asset is returned. No oracle.
+// =====================================================================================
+
+fn gen_ariyah(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let mut s = provenance_doc(spec, &format!("{} — 'ariyya (gratuitous loan of usufruct) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(ARIYAH_BODY);
+    s.push_str("}\n");
+    let test_js = gen_ariyah_test(&name);
+    let descriptor = ariyah_descriptor(&name);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const ARIYAH_BODY: &str = r#"    address public immutable muir;     // the lender (al-mu'ir)
+    address public immutable mustair;  // the borrower (al-musta'ir)
+
+    bool public lent;
+    bool public returned;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyMuir() { require(msg.sender == muir, "only lender"); _; }
+    modifier onlyMustair() { require(msg.sender == mustair, "only borrower"); _; }
+
+    event UsufructLent();
+    event AssetReturned();
+
+    constructor(address _mustair) {
+        require(_mustair != address(0), "zero addr");
+        require(_mustair != msg.sender, "lender and borrower must be distinct");
+        muir = msg.sender; mustair = _mustair;
+    }
+
+    /// @dev INVARIANT gratuitous: there is no fee path — the usufruct is lent free of charge.
+    function lendUse() external onlyMuir nonReentrant {
+        require(!lent, "already lent");
+        lent = true; emit UsufructLent();
+    }
+
+    /// @dev INVARIANT returns_same: the SAME asset is returned (only its usufruct was lent).
+    function returnAsset() external onlyMustair nonReentrant {
+        require(lent && !returned, "nothing to return");
+        returned = true; emit AssetReturned();
+    }
+"#;
+
+fn gen_ariyah_test(name: &str) -> String {
+    format!(
+        r#"// Generated by fiqhc — 'Ariyya (gratuitous loan of usufruct). Proves the loan is free and the
+// same asset is returned (no money moves).
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — 'ariyya", function () {{
+  let muir, mustair, c;
+
+  beforeEach(async function () {{
+    [muir, mustair] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(muir).deploy(mustair.address);
+    await c.waitForDeployment();
+  }});
+
+  it("gratuitous lifecycle: lend the usufruct, then the borrower returns the same asset", async function () {{
+    await expect(c.connect(muir).lendUse()).to.emit(c, "UsufructLent");
+    await expect(c.connect(mustair).returnAsset()).to.emit(c, "AssetReturned");
+    expect(await c.returned()).to.equal(true);
+  }});
+
+  it("only the borrower returns the asset", async function () {{
+    await c.connect(muir).lendUse();
+    await expect(c.connect(muir).returnAsset()).to.be.revertedWith("only borrower");
+  }});
+}});
+"#,
+        name = name,
+    )
+}
+
+fn ariyah_descriptor(name: &str) -> String {
+    format!(
+        r#"{{
+  "instrument": "ariyah",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "muir",
+  "oracle": null,
+  "constructorAbi": ["address"],
+  "constructorArgs": ["@mustair"],
+  "accounts": ["mustair"],
+  "lifecycle": [
+    {{ "as": "muir", "fn": "lendUse", "note": "lender lends the usufruct gratis" }},
+    {{ "as": "mustair", "fn": "returnAsset", "note": "borrower returns the same asset" }}
+  ],
+  "reads": ["lent","returned"]
+}}
+"#,
+        name = name,
     )
 }
 
