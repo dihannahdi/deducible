@@ -1,0 +1,36 @@
+// NEGATIVE CONTROL — commercial insurance dressed as takaful. Two faults:
+//   (1) basis: premium — a premium that buys risk-cover for profit (gharar + maysir) -> TAKAFUL-1.
+//   (2) surplus: to_operator — the surplus is taken as the insurer's profit -> TAKAFUL-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument TakafulRiba : takaful {
+  meta {
+    basis: "commercial insurance dressed as takaful";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    manager : operator;
+  }
+
+  pool {
+    participantA: 5000 bps;
+    participantB: 5000 bps;
+  }
+
+  returns {
+    contribution {
+      basis:   premium;      // TAKAFUL-1: a profit-premium, not tabarru'
+      surplus: to_operator;  // TAKAFUL-2: surplus taken as the insurer's profit
+    }
+  }
+
+  invariant donation_basis          { contribution.basis == tabarru }
+  invariant surplus_to_participants { contribution.surplus == to_participants }
+
+  lifecycle {
+    contribute;
+    payClaim;
+    distributeSurplus;
+  }
+}

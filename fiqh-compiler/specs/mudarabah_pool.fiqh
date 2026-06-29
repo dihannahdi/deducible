@@ -1,0 +1,43 @@
+// Mudarabah pool (investment fund). Many rabb al-mal (a pool) provide capital; one mudarib manages.
+// Profit is shared by a pre-agreed ratio (mudarib vs the pool); loss falls on the capital pool
+// pro-rata; the mudarib guarantees nothing. Citations [scholar-verify].
+
+instrument MudarabahPool : mudarabah_pool {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 13 (Mudarabah), pooled";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    manager : mudarib;
+  }
+
+  pool {
+    rabbA: 5000 bps;
+    rabbB: 3000 bps;
+    rabbC: 2000 bps;
+  }
+
+  returns {
+    profit {
+      split:   ratio;
+      mudarib: 3000 bps;  // mudarib's share of the profit
+      rabbs:   7000 bps;  // the capital pool's share
+    }
+  }
+
+  risk {
+    loss: on_capital_pool;   // loss borne by the rabb pool pro-rata
+    capital_guarantee: none; // the mudarib guarantees nothing
+  }
+
+  invariant profit_by_ratio { profit.split == ratio }
+  invariant loss_on_capital { loss == on_capital_pool }
+  invariant no_guarantee    { capital_guarantee == none }
+
+  lifecycle {
+    fund;
+    reportProfit;
+    distribute;
+  }
+}

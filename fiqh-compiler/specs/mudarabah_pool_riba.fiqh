@@ -1,0 +1,43 @@
+// NEGATIVE CONTROL — a pooled "mudarabah" with a guaranteed return. Two faults:
+//   (1) capital_guarantee: mudarib — the mudarib guarantees the capital (riba) -> RIBA-1.
+//   (2) loss: on_mudarib — loss put on the mudarib rather than the capital pool -> RISK-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument MudarabahPoolRiba : mudarabah_pool {
+  meta {
+    basis: "a guaranteed pooled mudarabah";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    manager : mudarib;
+  }
+
+  pool {
+    rabbA: 5000 bps;
+    rabbB: 5000 bps;
+  }
+
+  returns {
+    profit {
+      split:   ratio;
+      mudarib: 3000 bps;
+      rabbs:   7000 bps;
+    }
+  }
+
+  risk {
+    loss: on_mudarib;             // RISK-2: loss must fall on the capital pool
+    capital_guarantee: mudarib;   // RIBA-1: the mudarib guarantees the capital
+  }
+
+  invariant profit_by_ratio { profit.split == ratio }
+  invariant loss_on_capital { loss == on_capital_pool }
+  invariant no_guarantee    { capital_guarantee == none }
+
+  lifecycle {
+    fund;
+    reportProfit;
+    distribute;
+  }
+}

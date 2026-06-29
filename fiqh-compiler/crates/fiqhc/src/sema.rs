@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_TAKAFUL: &str = "takāful (taʿāwunī / cooperative): the participants DONATE (tabarruʿ) into a mutual fund from which claims are paid, and the surplus belongs to the participants. The OIC International Islamic Fiqh Academy and AAOIFI hold COMMERCIAL insurance impermissible — selling risk-cover for a premium-for-profit combines gharar, maysir, and riba — and approve the cooperative model instead [scholar-verify]";
 const C_SUKUK: &str = "ṣukūk (investment certificates): AAOIFI Shari'ah Standard No. 17; each ṣakk is an UNDIVIDED OWNERSHIP share in a real asset / usufruct / venture, NOT a debt — the holder's return is the asset's rental or profit distributed PRO-RATA, and the holder bears the asset's risk; a ṣukūk that guarantees the principal plus a fixed return is a bond (riba), not ṣukūk [scholar-verify]";
 const C_POOL: &str = "a multilateral participant pool — the participants' shares must total the whole (10000 bps) and there must be at least two of them [scholar-verify]";
 const C_MUSHARAKAH: &str = "mushārakah (sharikat al-ʿaqd): AAOIFI Shari'ah Standard No. 12; profit is shared by a pre-agreed RATIO (which may differ from the capital ratio), but loss is borne STRICTLY in proportion to capital — 'al-ribḥ ʿala mā shtaraṭā wa-l-waḍīʿa ʿala qadr al-māl' (athar of ʿAli, by ijmaʿ for the loss rule); no partner guarantees another's capital [scholar-verify]";
@@ -98,6 +99,8 @@ pub enum Class {
     Musharakah,
     Muzaraah,
     Sukuk,
+    Takaful,
+    MudarabahPool,
     CommercialEscrow,
     Unknown(String),
 }
@@ -125,6 +128,8 @@ impl Class {
             "musharakah" => Class::Musharakah,
             "muzaraah" => Class::Muzaraah,
             "sukuk" => Class::Sukuk,
+            "takaful" => Class::Takaful,
+            "mudarabah_pool" => Class::MudarabahPool,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -217,6 +222,8 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Musharakah => check_musharakah_full(spec, &mut d),
         Class::Muzaraah => check_muzaraah(spec, &mut d),
         Class::Sukuk => check_sukuk(spec, &mut d),
+        Class::Takaful => check_takaful(spec, &mut d),
+        Class::MudarabahPool => check_mudarabah_pool(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1599,6 +1606,62 @@ fn check_sukuk(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["return_is_asset_based", "pro_rata_distribution"], d);
+}
+
+// --- Takaful (cooperative insurance) ---
+//
+// The participants (a pool) DONATE (tabarruʿ) into a mutual fund; claims are paid from it and the
+// surplus returns to the participants (TAKAFUL-2). The contribution is a donation, NOT a premium
+// that transfers risk for profit (TAKAFUL-1 — that would be commercial insurance: gharar + maysir).
+fn check_takaful(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if role_party(spec, "operator").is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "takaful requires a party with role 'operator' (manages the fund)", C_TAKAFUL));
+    }
+    check_pool(spec, d);
+
+    match find_return(spec, "contribution") {
+        None => d.push(Diagnostic::error("TAKAFUL-1", spec.span, "takaful requires returns { contribution { basis; surplus } }", C_TAKAFUL)),
+        Some(c) => {
+            match kv_get(&c.kvs, "basis").and_then(|e| e.as_ident()) {
+                Some("tabarru") => {}
+                Some(other) => d.push(Diagnostic::error("TAKAFUL-1", c.span, format!("contribution basis is '{}'; takaful contributions are tabarruʿ (donation) — a premium that buys risk-cover for profit is commercial insurance (gharar + maysir)", other), C_TAKAFUL)),
+                None => d.push(Diagnostic::error("TAKAFUL-1", c.span, "takaful must declare contribution basis: tabarru", C_TAKAFUL)),
+            }
+            match kv_get(&c.kvs, "surplus").and_then(|e| e.as_ident()) {
+                Some("to_participants") => {}
+                Some(other) => d.push(Diagnostic::error("TAKAFUL-2", c.span, format!("surplus is '{}'; the takaful surplus belongs to the PARTICIPANTS, not the operator's profit", other), C_TAKAFUL)),
+                None => d.push(Diagnostic::error("TAKAFUL-2", c.span, "takaful must declare surplus: to_participants", C_TAKAFUL)),
+            }
+        }
+    }
+
+    require_invariants(spec, &["donation_basis", "surplus_to_participants"], d);
+}
+
+// --- Mudarabah pool (investment fund: many rabb al-mal, one mudarib) ---
+//
+// Generalises mudarabah to a POOL of capital providers: profit is shared by ratio (mudarib vs the
+// pool), loss falls on the capital pool pro-rata (RISK), and the mudarib guarantees nothing (RIBA-1).
+fn check_mudarabah_pool(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    if role_party(spec, "mudarib").is_none() {
+        d.push(Diagnostic::error("MUD-3", spec.span, "mudarabah_pool requires a party with role 'mudarib'", C_MUDARABAH));
+    }
+    check_pool(spec, d);
+
+    match risk_get(spec, "capital_guarantee") {
+        Some(e) if e.as_ident() == Some("none") => {}
+        _ => d.push(Diagnostic::error("RIBA-1", spec.span, "a mudarabah_pool must declare risk { capital_guarantee: none } — the mudarib guarantees nothing", C_MUDARABAH)),
+    }
+    match risk_get(spec, "loss") {
+        Some(e) if e.as_ident() == Some("on_capital_pool") => {}
+        _ => d.push(Diagnostic::error("RISK-2", spec.span, "a mudarabah_pool must declare risk { loss: on_capital_pool } — loss falls on the rabb al-mal pool, pro-rata", C_MUDARABAH)),
+    }
+    match find_return(spec, "profit") {
+        Some(p) if kv_get(&p.kvs, "split").and_then(|e| e.as_ident()) == Some("ratio") => {}
+        _ => d.push(Diagnostic::error("PROFIT-1", spec.span, "mudarabah_pool profit must be split by a pre-agreed ratio (split: ratio)", C_MUDARABAH)),
+    }
+
+    require_invariants(spec, &["profit_by_ratio", "loss_on_capital", "no_guarantee"], d);
 }
 
 // --- Musharakah (full partnership, sharikat al-'aqd) ---

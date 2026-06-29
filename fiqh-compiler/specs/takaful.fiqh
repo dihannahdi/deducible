@@ -1,0 +1,37 @@
+// Takaful (cooperative / ta'awuni). The participants (a pool) donate (tabarru') into a mutual fund;
+// claims are paid from it and the surplus returns to the participants pro-rata. This is NOT
+// commercial insurance — which sells risk-cover for a premium-for-profit (gharar + maysir + riba)
+// and is held impermissible by the OIC Fiqh Academy. Citations [scholar-verify].
+
+instrument Takaful : takaful {
+  meta {
+    basis: "takaful ta'awuni; OIC Fiqh Academy / AAOIFI (commercial insurance forbidden)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    manager : operator;
+  }
+
+  pool {
+    participantA: 4000 bps;
+    participantB: 3500 bps;
+    participantC: 2500 bps;
+  }
+
+  returns {
+    contribution {
+      basis:   tabarru;          // donation, not a profit-premium
+      surplus: to_participants;  // surplus returns to participants, not the operator
+    }
+  }
+
+  invariant donation_basis          { contribution.basis == tabarru }
+  invariant surplus_to_participants { contribution.surplus == to_participants }
+
+  lifecycle {
+    contribute;        // participants donate into the pool
+    payClaim;          // claims paid from the pool
+    distributeSurplus; // surplus returned to participants pro-rata
+  }
+}

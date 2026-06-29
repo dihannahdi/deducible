@@ -40,6 +40,8 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Musharakah => gen_musharakah_full(spec),
         Class::Muzaraah => gen_muzaraah(spec),
         Class::Sukuk => gen_sukuk(spec),
+        Class::Takaful => gen_takaful(spec),
+        Class::MudarabahPool => gen_mudarabah_pool(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -148,6 +150,15 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("SUKUK-1", "returns.income.basis", "eq", json!("asset_rental"), "the return is the asset's rental/profit, not interest; AAOIFI SS 17 [scholar-verify]");
             add("SUKUK-2", "returns.income.distribution", "eq", json!("pro_rata"), "income distributed pro-rata to undivided ownership shares [scholar-verify]");
         }
+        Class::Takaful => {
+            add("TAKAFUL-1", "returns.contribution.basis", "eq", json!("tabarru"), "contributions are tabarru' (donation), not a profit-premium; OIC/AAOIFI [scholar-verify]");
+            add("TAKAFUL-2", "returns.contribution.surplus", "eq", json!("to_participants"), "the surplus belongs to the participants, not the operator [scholar-verify]");
+        }
+        Class::MudarabahPool => {
+            add("RIBA-1", "risk.capital_guarantee", "eq", json!("none"), "the mudarib guarantees nothing; AAOIFI SS 13 [scholar-verify]");
+            add("RISK-2", "risk.loss", "eq", json!("on_capital_pool"), "loss on the rabb al-mal pool pro-rata [scholar-verify]");
+            add("PROFIT-1", "returns.profit.split", "eq", json!("ratio"), "profit by a pre-agreed ratio [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -180,6 +191,8 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Musharakah => vec!["partner"],
         Class::Muzaraah => vec!["landowner", "cultivator"],
         Class::Sukuk => vec!["issuer", "holder"],
+        Class::Takaful => vec!["operator", "participant"],
+        Class::MudarabahPool => vec!["mudarib", "rabb_al_mal"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -3946,6 +3959,241 @@ fn sukuk_descriptor(name: &str, shares: &[u64]) -> String {
 "#,
         name = name,
         shares_json = shares_json,
+    )
+}
+
+// =====================================================================================
+// Takaful (cooperative). A participant pool donates (tabarru') into a mutual fund; the operator
+// pays claims from it and distributes the surplus PRO-RATA back to the participants. No oracle.
+// =====================================================================================
+
+fn gen_takaful(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let shares = pool_shares(spec);
+    let mut s = provenance_doc(spec, &format!("{} — takaful (cooperative; tabarru' pool) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(TAKAFUL_BODY);
+    s.push_str("}\n");
+    let test_js = gen_takaful_test(&name, &shares);
+    let descriptor = sukuk_descriptor(&name, &shares); // same pool-shaped descriptor
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const TAKAFUL_BODY: &str = r#"    address public immutable operator;
+    address[] public participants;
+    uint16[] public sharesBps;
+    uint256 public constant BPS = 10000;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyOperator() { require(msg.sender == operator, "only operator"); _; }
+
+    event Contributed(uint256 amount);
+    event ClaimPaid(address to, uint256 amount);
+    event SurplusDistributed(uint256 total);
+
+    constructor(address[] memory _participants, uint16[] memory _sharesBps) {
+        require(_participants.length == _sharesBps.length && _participants.length >= 2, "participants/shares");
+        uint256 sum;
+        for (uint256 i = 0; i < _sharesBps.length; i++) {
+            require(_participants[i] != address(0), "zero participant");
+            sum += _sharesBps[i];
+            participants.push(_participants[i]);
+            sharesBps.push(_sharesBps[i]);
+        }
+        require(sum == BPS, "participant shares must total 10000 bps");
+        operator = msg.sender;
+    }
+
+    /// @dev tabarru': contributions are donations into the mutual fund (held here).
+    function contribute() external payable {
+        require(msg.value > 0, "no contribution");
+        emit Contributed(msg.value);
+    }
+
+    /// @dev claims are paid FROM the mutual fund.
+    function payClaim(address to, uint256 amount) external onlyOperator nonReentrant {
+        require(amount <= address(this).balance, "claim exceeds the fund");
+        (bool ok, ) = to.call{value: amount}(""); require(ok, "claim xfer");
+        emit ClaimPaid(to, amount);
+    }
+
+    /// @dev INVARIANT surplus_to_participants: the remaining surplus is distributed PRO-RATA to the
+    ///      participants — never taken as the operator's profit (there is no path to the operator).
+    function distributeSurplus() external onlyOperator nonReentrant {
+        uint256 total = address(this).balance;
+        for (uint256 i = 0; i < participants.length; i++) {
+            uint256 part = (total * sharesBps[i]) / BPS;
+            if (part > 0) { (bool ok, ) = participants[i].call{value: part}(""); require(ok, "surplus xfer"); }
+        }
+        emit SurplusDistributed(total);
+    }
+"#;
+
+fn gen_takaful_test(name: &str, shares: &[u64]) -> String {
+    let n = shares.len();
+    let shares_js = shares.iter().map(|s| format!("{}n", s)).collect::<Vec<_>>().join(", ");
+    format!(
+        r#"// Generated by fiqhc — Takaful (cooperative). Proves the surplus returns PRO-RATA to the
+// participant pool, and only the operator pays claims.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — takaful", function () {{
+  let operator, participants, c;
+  const SHARES = [{shares_js}];
+  const FUND = 1000000n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    const signers = await ethers.getSigners();
+    operator = signers[0];
+    participants = signers.slice(1, 1 + {n});
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(operator).deploy(participants.map(p => p.address), SHARES);
+    await c.waitForDeployment();
+  }});
+
+  it("surplus_to_participants: the surplus is returned pro-rata to participants", async function () {{
+    await c.connect(operator).contribute({{ value: FUND }});
+    const before = await Promise.all(participants.map(p => ethers.provider.getBalance(p.address)));
+    await c.connect(operator).distributeSurplus();
+    for (let i = 0; i < participants.length; i++) {{
+      const after = await ethers.provider.getBalance(participants[i].address);
+      expect(after - before[i]).to.equal((FUND * SHARES[i]) / BPS);
+    }}
+  }});
+
+  it("only the operator pays claims and distributes surplus", async function () {{
+    await c.connect(operator).contribute({{ value: FUND }});
+    await expect(c.connect(participants[0]).distributeSurplus()).to.be.revertedWith("only operator");
+  }});
+}});
+"#,
+        name = name,
+        shares_js = shares_js,
+        n = n,
+    )
+}
+
+// =====================================================================================
+// Mudarabah pool (investment fund). Many rabb al-mal (pool) + one mudarib. settle() distributes
+// realized proceeds: profit (over capital) gives the mudarib its ratio cut, the rest pro-rata to
+// the pool; on a loss the mudarib gets nothing and the pool bears it pro-rata. No oracle.
+// =====================================================================================
+
+fn gen_mudarabah_pool(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let shares = pool_shares(spec);
+    let mudarib_bps = spec
+        .returns()
+        .into_iter()
+        .find(|r| r.kind == "profit")
+        .and_then(|r| kv_get(&r.kvs, "mudarib"))
+        .and_then(|e| e.as_num())
+        .unwrap_or(3000);
+    let mut s = provenance_doc(spec, &format!("{} — mudarabah pool (many rabb al-mal, one mudarib) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(MUDARABAH_POOL_BODY);
+    s.push_str("}\n");
+    let test_js = gen_mudarabah_pool_test(&name, &shares, mudarib_bps);
+    let descriptor = sukuk_descriptor(&name, &shares);
+    Ok(Generated { instrument: spec.class.clone(), contract_name: name, sol: s, test_js, descriptor })
+}
+
+const MUDARABAH_POOL_BODY: &str = r#"    address public immutable mudarib;
+    address[] public rabbs;
+    uint16[] public sharesBps;     // each rabb's share of the capital pool
+    uint256 public immutable totalCapital;
+    uint256 public immutable mudaribProfitBps;
+    uint256 public constant BPS = 10000;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyMudarib() { require(msg.sender == mudarib, "only mudarib"); _; }
+
+    event Settled(uint256 realized, uint256 toMudarib);
+
+    constructor(address[] memory _rabbs, uint16[] memory _sharesBps, uint256 _totalCapital, uint256 _mudaribProfitBps) {
+        require(_rabbs.length == _sharesBps.length && _rabbs.length >= 2, "rabbs/shares");
+        require(_mudaribProfitBps < BPS, "profit split");
+        uint256 sum;
+        for (uint256 i = 0; i < _sharesBps.length; i++) {
+            require(_rabbs[i] != address(0), "zero rabb");
+            sum += _sharesBps[i];
+            rabbs.push(_rabbs[i]);
+            sharesBps.push(_sharesBps[i]);
+        }
+        require(sum == BPS, "capital shares must total 10000 bps");
+        mudarib = msg.sender; totalCapital = _totalCapital; mudaribProfitBps = _mudaribProfitBps;
+    }
+
+    /// @dev INVARIANT profit_by_ratio: profit over capital gives the mudarib its ratio cut.
+    ///      INVARIANT loss_on_capital + no_guarantee: a shortfall is borne by the rabb pool pro-rata;
+    ///      the mudarib gets NOTHING on a loss and never tops up the capital.
+    function settle(uint256 realized) external payable onlyMudarib nonReentrant {
+        require(!settled, "settled");
+        require(msg.value == realized, "send exactly the realized proceeds");
+        settled = true;
+        uint256 toMudarib = 0;
+        if (realized > totalCapital) {
+            uint256 profit = realized - totalCapital;
+            toMudarib = (profit * mudaribProfitBps) / BPS;
+            if (toMudarib > 0) { (bool okM, ) = mudarib.call{value: toMudarib}(""); require(okM, "to mudarib"); }
+        }
+        uint256 toPool = realized - toMudarib;
+        for (uint256 i = 0; i < rabbs.length; i++) {
+            uint256 part = (toPool * sharesBps[i]) / BPS;
+            if (part > 0) { (bool ok, ) = rabbs[i].call{value: part}(""); require(ok, "to rabb"); }
+        }
+        emit Settled(realized, toMudarib);
+    }
+"#;
+
+fn gen_mudarabah_pool_test(name: &str, shares: &[u64], mudarib_bps: u64) -> String {
+    let n = shares.len();
+    let shares_js = shares.iter().map(|s| format!("{}n", s)).collect::<Vec<_>>().join(", ");
+    format!(
+        r#"// Generated by fiqhc — Mudarabah pool. Proves profit gives the mudarib its ratio cut and the
+// rest goes pro-rata to the rabb pool; on a loss the mudarib gets nothing.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — mudarabah pool", function () {{
+  let mudarib, rabbs, c;
+  const SHARES = [{shares_js}];
+  const TOTAL = 1000000n, MUDARIB_BPS = {mudarib_bps}n, BPS = 10000n;
+
+  beforeEach(async function () {{
+    const signers = await ethers.getSigners();
+    mudarib = signers[0];
+    rabbs = signers.slice(1, 1 + {n});
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(mudarib).deploy(rabbs.map(r => r.address), SHARES, TOTAL, MUDARIB_BPS);
+    await c.waitForDeployment();
+  }});
+
+  it("profit_by_ratio: the mudarib takes its ratio of the profit, the pool the rest pro-rata", async function () {{
+    const realized = TOTAL + 300000n;
+    const profit = realized - TOTAL;
+    const toMudarib = (profit * MUDARIB_BPS) / BPS;
+    await expect(c.connect(mudarib).settle(realized, {{ value: realized }})).to.emit(c, "Settled").withArgs(realized, toMudarib);
+  }});
+
+  it("loss_on_capital: on a loss the mudarib gets nothing", async function () {{
+    const realized = TOTAL - 200000n;
+    await expect(c.connect(mudarib).settle(realized, {{ value: realized }})).to.emit(c, "Settled").withArgs(realized, 0n);
+  }});
+
+  it("only the mudarib settles", async function () {{
+    await expect(c.connect(rabbs[0]).settle(TOTAL, {{ value: TOTAL }})).to.be.revertedWith("only mudarib");
+  }});
+}});
+"#,
+        name = name,
+        shares_js = shares_js,
+        mudarib_bps = mudarib_bps,
+        n = n,
     )
 }
 
