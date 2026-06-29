@@ -110,6 +110,7 @@ const C_CERTAINTY: &str = "certainty of terms: Scammell & Nephew v Ouston [1941]
 const C_CONSIDERATION: &str = "consideration must move from the promisee: Currie v Misa (1875) LR 10 Ex 153 [verify]";
 const C_GOODFAITH: &str = "duty of good faith (UCC sec. 1-304; Yam Seng v ITC [2013] EWHC 111) [verify]";
 const C_ZAKAT: &str = "zakat al-tijarah: rub' al-'ushr (1/40 = 2.5%) on trade goods at haul (a lunar year) + nisab — al-Tawbah 9:103; Sunan Abi Dawud (athar of Samurah b. Jundub on goods prepared for sale); AAOIFI SS No. 35 [scholar-verify]";
+const C_ASNAF: &str = "the eight categories of zakat recipients (aṣnāf): al-Tawba 9:60 — al-fuqarāʾ, al-masākīn, al-ʿāmilīn ʿalayhā, al-muʾallafa qulūbuhum, fī al-riqāb, al-ghārimīn, fī sabīlillāh, ibn al-sabīl [scholar-verify]";
 const C_JAAIHAH: &str = "wad' al-jawa'ih (remission for blight): the Prophet ﷺ ordered the abatement of a buyer's obligation when goods are struck by a calamity — Sahih Muslim, hadith of Jabir; the loss falls on the owner, never added as interest [scholar-verify]";
 const C_FARAID: &str = "al-fara'id: the estate of a deceased passes by the fixed shares apportioned in al-Nisa' 4:11-12, 4:176 — distribution is by the furud, not by discretion [scholar-verify]";
 
@@ -336,6 +337,47 @@ fn check_zakat(spec: &Spec, d: &mut Vec<Diagnostic>) {
             "zakat block must declare a beneficiary (e.g. beneficiary: maslahah)",
             C_ZAKAT,
         )),
+    }
+
+    // ZAKAT-6: if a disbursement policy by the eight aṣnāf (al-Tawba 9:60) is declared at all,
+    // every one of the eight categories must be present and the shares must sum to 10000 bps.
+    // (The fund remains the on-chain collection point; this is the validated, recorded policy by
+    // which a trustee disburses to eligible recipients.)
+    let asnaf_keys = [
+        "asnaf_fuqara", "asnaf_masakin", "asnaf_amilin", "asnaf_muallafa",
+        "asnaf_riqab", "asnaf_gharimin", "asnaf_fi_sabilillah", "asnaf_ibn_sabil",
+    ];
+    if spec.zakat_cfg().iter().any(|kv| kv.key.starts_with("asnaf_")) {
+        let mut sum: u64 = 0;
+        for cat in asnaf_keys {
+            match zakat_get(spec, cat).and_then(|e| e.as_num()) {
+                Some(n) => sum += n,
+                None => d.push(Diagnostic::error(
+                    "ZAKAT-6",
+                    spec.span,
+                    format!("the zakat aṣnāf policy is missing category '{}'; all eight of al-Tawba 9:60 must be present", cat),
+                    C_ASNAF,
+                )),
+            }
+        }
+        for kv in spec.zakat_cfg() {
+            if kv.key.starts_with("asnaf_") && !asnaf_keys.contains(&kv.key.as_str()) {
+                d.push(Diagnostic::error(
+                    "ZAKAT-6",
+                    kv.span,
+                    format!("'{}' is not one of the eight aṣnāf of al-Tawba 9:60", kv.key),
+                    C_ASNAF,
+                ));
+            }
+        }
+        if sum != 10_000 {
+            d.push(Diagnostic::error(
+                "ZAKAT-6",
+                spec.span,
+                format!("the aṣnāf shares sum to {} bps; the eight categories must total exactly 10000 bps", sum),
+                C_ASNAF,
+            ));
+        }
     }
 }
 

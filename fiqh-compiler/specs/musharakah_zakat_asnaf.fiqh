@@ -1,0 +1,79 @@
+// Zakat with the EIGHT aṣnāf disbursement policy (al-Tawba 9:60). The 2.5% still routes on-chain
+// to the zakat fund (the collection point); the eight named shares — summing to 10000 bps — are the
+// validated, recorded policy by which a trustee disburses to eligible recipients. The engine checks
+// all eight categories are present and total exactly 100%, and emits the policy as auditable
+// on-chain constants. Citations [scholar-verify].
+instrument MusharakahZakatAsnaf : musharakah_mutanaqisah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 12 (Musharakah) + SS No. 35 (Zakah); al-Tawba 9:60 (asnaf)";  // [scholar-verify]
+    riba_ref: "al-Baqarah 2:275";                                                                      // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank    : financier;
+    client  : acquirer;
+    valuer  : oracle independent;
+    arbiter : adjudicator;
+    maslahah: beneficiary;
+  }
+
+  capital {
+    bank   : 8000 bps;
+    client : 2000 bps;
+    require bank + client == 10000 bps;
+  }
+
+  returns {
+    rent {
+      basis: bank.share;
+      rate: 1 per_bps_period;
+    }
+    buyout {
+      price: oracle.fairValue * bps;
+      transfers: bank.share -> client.share;
+    }
+  }
+
+  risk {
+    loss: proportional_to_ownership;
+    capital_guarantee: none;
+  }
+
+  zakat {
+    rate_bps: 250;
+    nisab: 8500000 tinybar;
+    haul: hijri_year;
+    beneficiary: maslahah;
+    base: net_liquid_assets;
+    // the eight aṣnāf of al-Tawba 9:60 — shares in bps, summing to 10000
+    asnaf_fuqara:        1250;
+    asnaf_masakin:       1250;
+    asnaf_amilin:        1250;
+    asnaf_muallafa:      1250;
+    asnaf_riqab:         1250;
+    asnaf_gharimin:      1250;
+    asnaf_fi_sabilillah: 1250;
+    asnaf_ibn_sabil:     1250;
+  }
+
+  invariant ownership_conserved  { bank.share + client.share == 10000 }
+  invariant rent_on_living_share { rent.basis == bank.share }
+  invariant loss_follows_capital { loss == proportional_to_ownership }
+  invariant price_attested       { buyout.price == oracle.fairValue }
+  invariant role_separation      { valuer != bank }
+
+  rescission {
+    khiyar_al_shart { window: 3600; before: performance; }
+    iqalah          { mutual: true; }
+    khiyar_al_ayb   { adjudicated_by: arbiter; }
+    faskh           { authority: arbiter; }
+  }
+
+  lifecycle {
+    fund;
+    payRent;
+    buyShare(bps);
+    settle;
+  }
+}

@@ -111,7 +111,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
-    let manifest = json!({
+    let mut manifest = json!({
         "instrument": spec.class,
         "regime": class.regime(),
         "name": spec.name,
@@ -122,6 +122,12 @@ pub fn build_manifest(spec: &Spec) -> String {
         },
         "note": "Portable invariant manifest. Enforce each constraint against a proposed terms object before committing it to any ledger or database. The engine proves consistency with a declared rule-base; it issues no fatwa.",
     });
+    let asnaf = asnaf_cfg(spec);
+    if !asnaf.is_empty() {
+        let m: serde_json::Map<String, serde_json::Value> =
+            asnaf.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+        manifest["zakat_asnaf"] = serde_json::Value::Object(m);
+    }
     serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| "{}".to_string())
 }
 
@@ -358,6 +364,26 @@ fn zakat_cfg(spec: &Spec) -> Option<(u64, u64)> {
     Some((g("rate_bps").unwrap_or(250), g("nisab").unwrap_or(0)))
 }
 
+/// The eight-asnaf disbursement policy (al-Tawba 9:60), if declared in the zakat block.
+fn asnaf_cfg(spec: &Spec) -> Vec<(String, u64)> {
+    spec.zakat_cfg()
+        .into_iter()
+        .filter(|kv| kv.key.starts_with("asnaf_"))
+        .filter_map(|kv| kv.val.as_num().map(|n| (kv.key.clone(), n)))
+        .collect()
+}
+
+/// Emit the recorded aṣnāf policy as on-chain constants — auditable; the fund disburses by these.
+fn mmp_asnaf(shares: &[(String, u64)]) -> String {
+    let mut s = String::from(
+        "\n    // @dev INVARIANT zakat_asnaf: the zakat fund disburses by the eight categories of\n    //      al-Tawba 9:60; these shares (bps, summing to 10000) are the validated, recorded policy.\n",
+    );
+    for (k, bps) in shares {
+        s.push_str(&format!("    uint16 public constant {}_BPS = {};\n", k.to_uppercase(), bps));
+    }
+    s
+}
+
 /// The Solidity for the built-in Zakat al-Tijarah layer. Routes rubʿ al-ʿushr (2.5%, 1/40)
 /// of the zakatable base to the existing maslahah/zakat fund, on-chain, due only at/above
 /// nisab — so corporate zakat is non-bypassable.
@@ -548,6 +574,10 @@ fn gen_musharakah(spec: &Spec) -> Result<Generated, String> {
     let zakat = zakat_cfg(spec);
     if let Some((zrate, znisab)) = zakat {
         s.push_str(&mmp_zakat(zrate, znisab));
+        let asnaf = asnaf_cfg(spec);
+        if !asnaf.is_empty() {
+            s.push_str(&mmp_asnaf(&asnaf));
+        }
     }
 
     // Lifecycle off-ramps (enterprise vector #4): jaa'ihah abatement + faraid dissolution.

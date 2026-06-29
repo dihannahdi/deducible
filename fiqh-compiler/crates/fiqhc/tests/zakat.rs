@@ -92,6 +92,25 @@ fn unknown_genus_is_refused() {
 }
 
 #[test]
+fn asnaf_policy_compiles_and_records_the_eight() {
+    let src = include_str!("../../../specs/musharakah_zakat_asnaf.fiqh");
+    let (spec, diags) = compile_check(src).expect("spec should parse");
+    let errors: Vec<&String> = diags.iter().filter(|d| d.is_error()).map(|d| &d.code).collect();
+    assert!(errors.is_empty(), "a valid 8-asnaf policy must compile; got {:?}", errors);
+    let g = codegen::generate(&spec).expect("codegen");
+    assert!(g.sol.contains("ASNAF_FUQARA_BPS"), "the asnaf policy must be emitted on-chain");
+    assert!(g.sol.contains("ASNAF_IBN_SABIL_BPS"), "all eight categories must be emitted");
+    let manifest = codegen::build_manifest(&spec);
+    assert!(manifest.contains("zakat_asnaf"), "the manifest must record the asnaf policy");
+}
+
+#[test]
+fn asnaf_shares_must_total_100_percent() {
+    let codes = error_codes(include_str!("../../../specs/musharakah_zakat_asnaf_bad.fiqh"));
+    assert!(codes.iter().any(|c| c == "ZAKAT-6"), "asnaf shares not summing to 10000 must raise ZAKAT-6; got {:?}", codes);
+}
+
+#[test]
 fn rate_for_kind_covers_the_genera() {
     assert_eq!(zakat::rate_for_kind("gold"), Some(250));
     assert_eq!(zakat::rate_for_kind("crops_rain"), Some(1000));
