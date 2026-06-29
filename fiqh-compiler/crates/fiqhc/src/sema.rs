@@ -18,6 +18,7 @@ const C_RISK: &str = "a partnership shares profit AND loss — AAOIFI SS No. 12 
 const C_GHARAR: &str = "prohibition of gharar (Sahih Muslim, Kitab al-Buyu') [scholar-verify]";
 const C_MUDARABAH: &str = "AAOIFI Shari'ah Standard No. 13 (Mudarabah) [scholar-verify]";
 const C_IJARAH: &str = "AAOIFI Shari'ah Standard No. 9 (Ijarah) [scholar-verify]";
+const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI Shari'ah Standard No. 8; the buyer must know the true cost; the seller must possess the good first — 'do not sell what you do not have' (Hakim b. Hizam — Sunan Abi Dawud, al-Tirmidhi, al-Nasa'i); al-Baqarah 2:275 (Allah permitted trade and forbade riba) [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,7 @@ pub enum Class {
     MusharakahMutanaqisah,
     Mudarabah,
     IjarahImbt,
+    Murabahah,
     CommercialEscrow,
     Unknown(String),
 }
@@ -74,6 +76,7 @@ impl Class {
             "musharakah_mutanaqisah" => Class::MusharakahMutanaqisah,
             "mudarabah" => Class::Mudarabah,
             "ijarah_imbt" => Class::IjarahImbt,
+            "murabahah" => Class::Murabahah,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -148,6 +151,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
                 _ => {}
             }
         }
+        Class::Murabahah => check_murabahah(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -700,6 +704,141 @@ fn check_mudarabah(spec: &Spec, d: &mut Vec<Diagnostic>) {
         d,
     );
     check_capital_sum(spec, d, false);
+}
+
+// --- Murabaha (cost-plus trust sale, bay' al-amana) ---
+//
+// Murabaha is a SALE, not a loan and not a partnership: the bank buys a real good, takes
+// possession of it, discloses its true cost, and sells it on for a fixed, disclosed markup —
+// payable deferred. The riba creeps in three ways, and the engine refuses each: (1) a markup
+// that grows with the deferral period is interest, not trade profit; (2) selling before
+// possession (qabd) turns the "sale" into a financing of money for money; (3) a late-payment
+// penalty that accrues to the seller is interest on the resulting debt. Consistency, not fatwa.
+fn check_murabahah(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    // parties: a distinct seller (the bank) and buyer (the customer).
+    let seller = role_party(spec, "seller").map(|p| p.name.clone());
+    let buyer = role_party(spec, "buyer").map(|p| p.name.clone());
+    if seller.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "a murabaha requires a party with role 'seller' (the bank/financier who buys then resells)", C_MURABAHA));
+    }
+    if buyer.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "a murabaha requires a party with role 'buyer' (the customer)", C_MURABAHA));
+    }
+    if let (Some(s), Some(b)) = (&seller, &buyer) {
+        if s == b {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "seller and buyer must be distinct parties — a sale needs two sides", C_MURABAHA));
+        }
+    }
+
+    // the `sale` block: disclosed cost, fixed markup, definite total, no penalty-riba.
+    match find_return(spec, "sale") {
+        None => d.push(Diagnostic::error(
+            "MUR-1",
+            spec.span,
+            "a murabaha requires returns { sale { cost; markup; total; markup_basis; payment } } — it is bay' al-amana, a trust sale on a disclosed cost",
+            C_MURABAHA,
+        )),
+        Some(sale) => {
+            // MUR-1: the true acquisition cost must be DISCLOSED (a definite, non-zero sum). This is
+            // what makes murabaha a trust sale (bay' al-amana) rather than an ordinary bargained sale.
+            match ret_kv(sale, "cost") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                Some(kv) => d.push(Diagnostic::error(
+                    "MUR-1",
+                    kv.span,
+                    "the murabaha cost must be a definite, disclosed sum (bay' al-amana: the buyer must know the true cost)",
+                    C_MURABAHA,
+                )),
+                None => d.push(Diagnostic::error(
+                    "MUR-1",
+                    sale.span,
+                    "murabaha must disclose the acquisition 'cost' — the buyer must know it (bay' al-amana)",
+                    C_MURABAHA,
+                )),
+            }
+
+            // RIBA-2: the markup must be a FIXED, disclosed sum agreed at contract — never a function
+            // of time or of the principal. A markup that grows with the deferral period is interest.
+            match ret_kv(sale, "markup_basis") {
+                Some(kv) if kv.val.as_ident() == Some("fixed") => {}
+                Some(kv) if kv.val.as_ident() == Some("time") || basis_is_principal(&kv.val) => d.push(Diagnostic::error(
+                    "RIBA-2",
+                    kv.span,
+                    "the markup is tied to time/principal — a profit that grows with the deferral period is interest (riba), not a fixed trade markup",
+                    C_RIBA,
+                )),
+                Some(kv) => d.push(Diagnostic::warn(
+                    "RIBA-2",
+                    kv.span,
+                    format!("markup_basis '{}' is not 'fixed'; a murabaha markup must be a fixed disclosed sum agreed at contract", kv.val.render()),
+                    C_RIBA,
+                )),
+                None => d.push(Diagnostic::error(
+                    "RIBA-2",
+                    sale.span,
+                    "murabaha must declare markup_basis: fixed — the profit is a fixed sum agreed at contract, never interest accruing over time",
+                    C_RIBA,
+                )),
+            }
+
+            // GHARAR-1: the total price must be a definite, known sum at contract (price certainty).
+            match ret_kv(sale, "total") {
+                Some(kv) if kv.val.as_num().map(|n| n > 0).unwrap_or(false) => {}
+                _ => d.push(Diagnostic::error(
+                    "GHARAR-1",
+                    sale.span,
+                    "murabaha must declare a definite total price (cost + markup), known at contract — an unknown price is gharar",
+                    C_GHARAR,
+                )),
+            }
+
+            // RIBA-3: no late-payment penalty accruing to the seller (interest on the resulting debt).
+            if let Some(kv) = sale.kvs.iter().find(|k| k.key == "late_penalty") {
+                if kv.val.as_ident() != Some("none") {
+                    d.push(Diagnostic::error(
+                        "RIBA-3",
+                        kv.span,
+                        "a late-payment penalty accruing to the seller is interest on a debt (riba); any charge must go to charity, not the seller",
+                        C_RIBA,
+                    ));
+                }
+            }
+        }
+    }
+
+    // MUR-2 (qabd / prior ownership): the bank must take ownership and possession BEFORE selling.
+    // 'Do not sell what you do not have' (Hakim b. Hizam). Enforced by a distinct lifecycle step
+    // 'acquireAsset' that must PRECEDE 'sell' — the substance that separates murabaha from a loan.
+    let lc = spec.lifecycle();
+    let acq = lc.iter().position(|s| s.name == "acquireAsset");
+    let sell = lc.iter().position(|s| s.name == "sell");
+    match (acq, sell) {
+        (Some(a), Some(s)) if a < s => {}
+        (None, _) => d.push(Diagnostic::error(
+            "MUR-2",
+            spec.span,
+            "murabaha requires a lifecycle step 'acquireAsset' — the bank must take ownership and possession (qabd) of the good BEFORE selling it ('do not sell what you do not have')",
+            C_MURABAHA,
+        )),
+        (Some(_), None) => d.push(Diagnostic::error(
+            "MUR-2",
+            spec.span,
+            "murabaha requires a 'sell' lifecycle step following 'acquireAsset'",
+            C_MURABAHA,
+        )),
+        (Some(_), Some(_)) => d.push(Diagnostic::error(
+            "MUR-2",
+            spec.span,
+            "in murabaha 'acquireAsset' (taking possession) must PRECEDE 'sell' — selling before possession (qabd) is invalid",
+            C_MURABAHA,
+        )),
+    }
+
+    require_invariants(
+        spec,
+        &["cost_disclosed", "markup_fixed", "price_certain", "prior_ownership", "no_penalty_interest"],
+        d,
+    );
 }
 
 // --- Ijarah Muntahia Bittamleek ---

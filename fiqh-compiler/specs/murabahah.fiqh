@@ -1,0 +1,42 @@
+// Murabaha (cost-plus trust sale, bay' al-amana). The bank buys a real good, takes possession
+// of it (qabd), discloses its true cost, then resells it to the customer for a fixed disclosed
+// markup, payable deferred. This is a SALE, not a loan: the riba is kept out by three rules —
+// the markup is a fixed sum (not interest on time), the bank must possess the good before
+// selling it ('do not sell what you do not have'), and a late payment can never raise the debt.
+// Citations [scholar-verify]; the engine proves consistency, not a fatwa.
+
+instrument Murabahah : murabahah {
+  meta {
+    basis: "AAOIFI Shari'ah Standard No. 8 (Murabaha to the Purchase Orderer)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank     : seller;     // the financier buys the good then resells it cost-plus
+    customer : buyer;
+  }
+
+  returns {
+    sale {
+      cost:         1000000;   // the bank's true acquisition cost — DISCLOSED (bay' al-amana)
+      markup:        100000;   // a fixed, disclosed profit (never interest on time)
+      total:        1100000;   // cost + markup, fixed at contract (price certainty)
+      markup_basis: fixed;     // the markup is a fixed sum, NOT a function of the deferral period
+      payment:      deferred;  // the price may be deferred / paid in instalments
+      late_penalty: none;      // no penalty-riba: a late payment never raises the debt
+    }
+  }
+
+  invariant cost_disclosed      { sale.cost != 0 }
+  invariant markup_fixed        { sale.markup_basis == fixed }
+  invariant price_certain       { sale.total != 0 }
+  invariant prior_ownership     { possession == required }
+  invariant no_penalty_interest { sale.late_penalty == none }
+
+  lifecycle {
+    acquireAsset;   // the bank takes ownership + possession (qabd) FIRST
+    discloseCost;   // bay' al-amana: the true cost is disclosed to the buyer
+    sell;           // the cost-plus sale is concluded at the fixed total
+    payInstalment;  // the buyer pays the fixed total (no penalty-riba on delay)
+  }
+}

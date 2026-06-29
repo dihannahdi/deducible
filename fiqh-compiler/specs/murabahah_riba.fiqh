@@ -1,0 +1,41 @@
+// NEGATIVE CONTROL — a murabaha that has been bent back into a loan. Two ways at once:
+//   (1) the markup is tied to TIME (markup_basis: time) — a profit that grows with the deferral
+//       period is interest (riba), not a trade markup → RIBA-2.
+//   (2) there is no 'acquireAsset' step — the bank "sells" before taking possession (qabd),
+//       so money is exchanged for money with a good as a fig-leaf → MUR-2.
+// The compiler must REFUSE this with cited diagnostics and emit no .sol. Allahu a'lam.
+
+instrument MurabahahRiba : murabahah {
+  meta {
+    basis: "a disguised loan dressed as murabaha";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    bank     : seller;
+    customer : buyer;
+  }
+
+  returns {
+    sale {
+      cost:         1000000;
+      markup:        100000;
+      total:        1100000;
+      markup_basis: time;       // RIBA-2: markup grows with the deferral period = interest
+      payment:      deferred;
+      late_penalty: surcharge;  // RIBA-3: a penalty accruing to the seller is interest on a debt
+    }
+  }
+
+  invariant cost_disclosed      { sale.cost != 0 }
+  invariant markup_fixed        { sale.markup_basis == fixed }
+  invariant price_certain       { sale.total != 0 }
+  invariant prior_ownership     { possession == required }
+  invariant no_penalty_interest { sale.late_penalty == none }
+
+  lifecycle {
+    discloseCost;   // MUR-2: 'sell' with no preceding 'acquireAsset' — no qabd
+    sell;
+    payInstalment;
+  }
+}

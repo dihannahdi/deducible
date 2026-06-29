@@ -23,6 +23,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::MusharakahMutanaqisah => gen_musharakah(spec),
         Class::Mudarabah => gen_mudarabah(spec),
         Class::IjarahImbt => gen_ijarah(spec),
+        Class::Murabahah => gen_murabahah(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -60,6 +61,11 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("RISK-3", "risk.loss", "eq", json!("on_lessor"), "AAOIFI SS 9 [scholar-verify]");
             add("RIBA-3", "returns.rent.late_penalty", "eq", json!("none"), "no interest on a debt [scholar-verify]");
         }
+        Class::Murabahah => {
+            add("MUR-1", "returns.sale.cost", "gt", json!(0), "bay' al-amana: the buyer must know the true cost; AAOIFI SS 8 [scholar-verify]");
+            add("RIBA-2", "returns.sale.markup_basis", "eq", json!("fixed"), "a markup that grows with time is interest; al-Baqarah 2:275 [scholar-verify]");
+            add("RIBA-3", "returns.sale.late_penalty", "eq", json!("none"), "no penalty-interest on the resulting debt [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -75,6 +81,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::MusharakahMutanaqisah => vec!["financier", "acquirer"],
         Class::Mudarabah => vec!["rabb_al_mal", "mudarib"],
         Class::IjarahImbt => vec!["lessor", "lessee"],
+        Class::Murabahah => vec!["seller", "buyer"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -1355,6 +1362,188 @@ fn ijarah_descriptor(name: &str, rate: u64, term: u64) -> String {
 // a definite condition, with arbiter-adjudicated remedy (release or refund). The same machinery
 // that encodes khiyar/faskh serves common-law arbitration — a prototype "code-based judiciary."
 // =====================================================================================
+
+// =====================================================================================
+// Murabaha (cost-plus trust sale, bay' al-amana). A bilateral SALE: the bank acquires a
+// real good (takes possession — qabd), discloses its true cost, then resells it for a fixed
+// disclosed markup on deferred terms. No oracle (the price is fixed and disclosed, not
+// market-valued). The compiled-in invariants make the three riba routes unrepresentable.
+// =====================================================================================
+
+fn sale_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "sale")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_murabahah(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let cost = sale_field(spec, "cost");
+    let markup = sale_field(spec, "markup");
+    let mut s = provenance_doc(spec, &format!("{} — murabaha (cost-plus trust sale, bay' al-amana) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(MURABAHAH_BODY);
+    s.push_str("}\n");
+    let test_js = gen_murabahah_test(&name, cost, markup);
+    let descriptor = murabahah_descriptor(&name, cost, markup);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const MURABAHAH_BODY: &str = r#"    address public immutable bank;      // the seller (financier)
+    address public immutable customer;  // the buyer
+    uint256 public immutable cost;      // the disclosed acquisition cost (bay' al-amana)
+    uint256 public immutable markup;    // the fixed, disclosed profit — never interest
+    uint256 public immutable total;     // cost + markup, fixed at contract (price certainty)
+
+    bool public acquired;   // the bank has taken ownership + possession (qabd)
+    bool public disclosed;  // the true cost has been disclosed to the buyer
+    bool public sold;       // the cost-plus sale has been concluded
+    uint256 public paid;    // cumulative instalments paid by the buyer
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyBank() { require(msg.sender == bank, "only bank"); _; }
+    modifier onlyCustomer() { require(msg.sender == customer, "only customer"); _; }
+
+    event AssetAcquired();
+    event CostDisclosed(uint256 cost, uint256 markup, uint256 total);
+    event Sold(uint256 total);
+    event InstalmentPaid(uint256 amount, uint256 paid, uint256 total);
+    event Settled();
+
+    /// @dev INVARIANT cost_disclosed: cost > 0. INVARIANT price_certain: total == cost + markup.
+    constructor(address _customer, uint256 _cost, uint256 _markup) {
+        require(_customer != address(0), "zero addr");
+        require(_customer != msg.sender, "seller and buyer must be distinct");
+        require(_cost > 0, "cost must be disclosed (bay' al-amana)");
+        bank = msg.sender; customer = _customer;
+        cost = _cost; markup = _markup; total = _cost + _markup;
+    }
+
+    /// @dev INVARIANT prior_ownership: the bank takes ownership + possession (qabd) BEFORE selling.
+    function acquireAsset() external onlyBank {
+        require(!acquired, "already acquired");
+        acquired = true; emit AssetAcquired();
+    }
+
+    /// @dev bay' al-amana: the true cost is disclosed to the buyer before the sale.
+    function discloseCost() external onlyBank {
+        require(acquired, "must possess the asset first");
+        disclosed = true; emit CostDisclosed(cost, markup, total);
+    }
+
+    /// @dev INVARIANT prior_ownership: 'do not sell what you do not have' — selling requires prior qabd.
+    function sell() external onlyBank {
+        require(acquired, "cannot sell before possession (qabd)");
+        require(disclosed, "cost must be disclosed first");
+        require(!sold, "already sold");
+        sold = true; emit Sold(total);
+    }
+
+    /// @dev INVARIANT no_penalty_interest: the buyer never owes more than the fixed total, no matter
+    ///      how late — there is no penalty-riba on the debt. Instalments forward straight to the bank.
+    function payInstalment() external payable onlyCustomer nonReentrant {
+        require(sold, "not sold yet");
+        require(!settled, "already settled");
+        require(msg.value > 0, "no payment");
+        require(paid + msg.value <= total, "would exceed the fixed total price");
+        paid += msg.value;
+        (bool ok, ) = bank.call{value: msg.value}(""); require(ok, "forward to bank failed");
+        emit InstalmentPaid(msg.value, paid, total);
+        if (paid == total) { settled = true; emit Settled(); }
+    }
+"#;
+
+fn gen_murabahah_test(name: &str, cost: u64, markup: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Murabaha (cost-plus trust sale, bay' al-amana). Proves the three riba
+// routes are unrepresentable: a markup that grows with time, selling before possession (qabd),
+// and a penalty that overcharges the debtor. The buyer can never owe more than the fixed total.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — murabaha cost-plus sale", function () {{
+  let bank, customer, c;
+  const COST = {cost}n, MARKUP = {markup}n, TOTAL = {cost}n + {markup}n;
+
+  beforeEach(async function () {{
+    [bank, customer] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(bank).deploy(customer.address, COST, MARKUP);
+    await c.waitForDeployment();
+  }});
+
+  it("price_certain: total == cost + markup, fixed at contract", async function () {{
+    expect(await c.total()).to.equal(COST + MARKUP);
+  }});
+
+  it("prior_ownership: cannot sell before taking possession (qabd)", async function () {{
+    await expect(c.connect(bank).sell()).to.be.revertedWith("cannot sell before possession (qabd)");
+  }});
+
+  it("full lifecycle: acquire -> disclose -> sell -> pay; the bank receives exactly the total", async function () {{
+    await c.connect(bank).acquireAsset();
+    await c.connect(bank).discloseCost();
+    await c.connect(bank).sell();
+    await expect(c.connect(customer).payInstalment({{ value: TOTAL }})).to.emit(c, "Settled");
+    expect(await c.paid()).to.equal(TOTAL);
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("no_penalty_interest: the buyer can never be charged more than the fixed total", async function () {{
+    await c.connect(bank).acquireAsset();
+    await c.connect(bank).discloseCost();
+    await c.connect(bank).sell();
+    await expect(c.connect(customer).payInstalment({{ value: TOTAL + 1n }})).to.be.revertedWith("would exceed the fixed total price");
+  }});
+
+  it("only the bank (seller) may acquire and sell", async function () {{
+    await expect(c.connect(customer).acquireAsset()).to.be.revertedWith("only bank");
+  }});
+}});
+"#,
+        name = name,
+        cost = cost,
+        markup = markup,
+    )
+}
+
+fn murabahah_descriptor(name: &str, cost: u64, markup: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "murabahah",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "bank",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256"],
+  "constructorArgs": ["@customer", {cost}, {markup}],
+  "accounts": ["customer"],
+  "lifecycle": [
+    {{ "as": "bank", "fn": "acquireAsset", "note": "bank takes ownership + possession (qabd) FIRST" }},
+    {{ "as": "bank", "fn": "discloseCost", "note": "bay' al-amana: true cost disclosed to the buyer" }},
+    {{ "as": "bank", "fn": "sell", "note": "cost-plus sale concluded at the fixed total" }},
+    {{ "as": "customer", "fn": "payInstalment", "value": {total}, "note": "buyer pays the fixed total; no penalty-riba" }}
+  ],
+  "reads": ["total","paid","settled"]
+}}
+"#,
+        name = name,
+        cost = cost,
+        markup = markup,
+        total = cost + markup,
+    )
+}
 
 fn escrow_amount(spec: &Spec) -> u64 {
     spec.returns()
