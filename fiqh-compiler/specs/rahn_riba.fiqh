@@ -1,0 +1,36 @@
+// NEGATIVE CONTROL — a pledge bent into a benefit + a forfeiture. Two faults:
+//   (1) creditor_use: rent_free — the creditor uses the pledge for free benefit; a benefit to the
+//       creditor from the pledge is riba on the loan -> RAHN-1.
+//   (2) surplus: to_creditor — on default the creditor keeps the whole pledge (forfeiture, the
+//       jahiliyya practice the pledge-is-not-forfeit rule abolished) -> RAHN-2.
+// The compiler must REFUSE and emit no .sol. Allahu a'lam.
+
+instrument RahnRiba : rahn {
+  meta {
+    basis: "a pledge used by the creditor and forfeited on default";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    debtor   : pledgor;
+    creditor : pledgee;
+  }
+
+  returns {
+    pledge {
+      debt:         1000000;
+      pledge_value: 1200000;
+      creditor_use: rent_free;     // RAHN-1: the creditor benefits from the pledge = riba
+      surplus:      to_creditor;   // RAHN-2: forfeiture — the pledge is not forfeit
+      liability:    amanah;
+    }
+  }
+
+  invariant no_creditor_benefit { pledge.creditor_use == none }
+  invariant surplus_to_pledgor  { pledge.surplus == to_pledgor }
+
+  lifecycle {
+    pledge;
+    repay;
+  }
+}

@@ -29,6 +29,7 @@ pub fn generate(spec: &Spec) -> Result<Generated, String> {
         Class::Sarf => gen_sarf(spec),
         Class::Tawarruq => gen_tawarruq(spec),
         Class::QardHasan => gen_qard(spec),
+        Class::Rahn => gen_rahn(spec),
         Class::CommercialEscrow => gen_commercial(spec),
         Class::Unknown(s) => Err(format!("no backend for instrument class '{}'", s)),
     }
@@ -93,6 +94,10 @@ pub fn build_manifest(spec: &Spec) -> String {
             add("QARD-1", "returns.loan.stipulated_increase", "eq", json!("none"), "no stipulated increase; every loan that draws a benefit is riba [scholar-verify]");
             add("QARD-2", "returns.loan.fee", "eq", json!("none"), "no fee/benefit conditioned on the loan (riba) [scholar-verify]");
         }
+        Class::Rahn => {
+            add("RAHN-1", "returns.pledge.creditor_use", "eq", json!("none"), "the creditor takes no benefit from the pledge (else riba on the loan) [scholar-verify]");
+            add("RAHN-2", "returns.pledge.surplus", "eq", json!("to_pledgor"), "the pledge is not forfeit; surplus over the debt returns to the pledgor [scholar-verify]");
+        }
         Class::CommercialEscrow => {
             add("PENALTY-1", "returns.release.damages", "eq", json!("liquidated"), "Cavendish v Makdessi [2015] UKSC 67 [verify]");
             add("CERTAINTY-1", "returns.release.amount", "gt", json!(0), "Scammell v Ouston [1941] AC 251 [verify]");
@@ -114,6 +119,7 @@ pub fn build_manifest(spec: &Spec) -> String {
         Class::Sarf => vec!["exchanger_a", "exchanger_b"],
         Class::Tawarruq => vec!["mustawriq", "financier", "third_party"],
         Class::QardHasan => vec!["lender", "borrower"],
+        Class::Rahn => vec!["pledgor", "pledgee"],
         Class::CommercialEscrow => vec!["depositor", "beneficiary"],
         Class::Unknown(_) => vec![],
     };
@@ -2430,6 +2436,160 @@ fn qard_descriptor(name: &str, principal: u64) -> String {
 "#,
         name = name,
         principal = principal,
+    )
+}
+
+// =====================================================================================
+// Rahn (pledge). The pledge is escrowed as security. On repayment it is returned; on default it
+// is liquidated — the creditor takes only the debt, the surplus returns to the pledgor (not
+// forfeit). The creditor never benefits from the held pledge. No oracle.
+// =====================================================================================
+
+fn pledge_field(spec: &Spec, key: &str) -> u64 {
+    spec.returns()
+        .into_iter()
+        .find(|r| r.kind == "pledge")
+        .and_then(|r| kv_get(&r.kvs, key))
+        .and_then(|e| e.as_num())
+        .unwrap_or(0)
+}
+
+fn gen_rahn(spec: &Spec) -> Result<Generated, String> {
+    let name = format!("{}Gen", spec.name);
+    let debt = pledge_field(spec, "debt");
+    let pledge_value = pledge_field(spec, "pledge_value");
+    let mut s = provenance_doc(spec, &format!("{} — rahn (pledge / collateral) (generated)", name));
+    s.push_str(&format!("contract {} {{\n", name));
+    s.push_str(RAHN_BODY);
+    s.push_str("}\n");
+    let test_js = gen_rahn_test(&name, debt, pledge_value);
+    let descriptor = rahn_descriptor(&name, debt, pledge_value);
+    Ok(Generated {
+        instrument: spec.class.clone(),
+        contract_name: name,
+        sol: s,
+        test_js,
+        descriptor,
+    })
+}
+
+const RAHN_BODY: &str = r#"    address public immutable pledgor;     // al-rahin (debtor)
+    address public immutable pledgee;     // al-murtahin (creditor)
+    uint256 public immutable debt;        // the secured debt
+    uint256 public immutable pledgeValue; // the marhun escrowed as security
+
+    bool public pledged;
+    bool public settled;
+
+    uint256 private _lock = 1;
+    modifier nonReentrant() { require(_lock == 1, "reentrant"); _lock = 2; _; _lock = 1; }
+    modifier onlyPledgor() { require(msg.sender == pledgor, "only pledgor"); _; }
+    modifier onlyPledgee() { require(msg.sender == pledgee, "only pledgee"); _; }
+
+    event Pledged(uint256 value);
+    event Redeemed(uint256 debtPaid, uint256 pledgeReturned);
+    event Liquidated(uint256 toCreditor, uint256 surplusToPledgor);
+
+    constructor(address _pledgee, uint256 _debt, uint256 _pledgeValue) {
+        require(_pledgee != address(0), "zero addr");
+        require(_pledgee != msg.sender, "pledgor and pledgee must be distinct");
+        require(_debt > 0 && _pledgeValue > 0, "amounts");
+        pledgor = msg.sender; pledgee = _pledgee; debt = _debt; pledgeValue = _pledgeValue;
+    }
+
+    /// @dev the marhun is escrowed here as security; the creditor never holds or uses it.
+    function pledge() external payable onlyPledgor {
+        require(!pledged, "already pledged");
+        require(msg.value == pledgeValue, "must escrow exactly the pledge value");
+        pledged = true; emit Pledged(pledgeValue);
+    }
+
+    /// @dev redemption: the pledgor repays the debt; the WHOLE pledge is returned to the pledgor.
+    function repay() external payable onlyPledgor nonReentrant {
+        require(pledged && !settled, "not redeemable");
+        require(msg.value == debt, "repay exactly the debt");
+        settled = true;
+        (bool okC, ) = pledgee.call{value: debt}(""); require(okC, "debt to creditor");
+        (bool okP, ) = pledgor.call{value: pledgeValue}(""); require(okP, "pledge to pledgor");
+        emit Redeemed(debt, pledgeValue);
+    }
+
+    /// @dev INVARIANT no_creditor_benefit + surplus_to_pledgor: on default the pledge is sold to
+    ///      satisfy the debt; the creditor takes ONLY the debt, and the surplus returns to the
+    ///      pledgor — the pledge is not forfeit (la yaghlaqu al-rahn).
+    function liquidate() external onlyPledgee nonReentrant {
+        require(pledged && !settled, "not liquidatable");
+        settled = true;
+        uint256 toCreditor = debt <= pledgeValue ? debt : pledgeValue;
+        uint256 surplus = pledgeValue - toCreditor;
+        (bool okC, ) = pledgee.call{value: toCreditor}(""); require(okC, "to creditor");
+        if (surplus > 0) { (bool okP, ) = pledgor.call{value: surplus}(""); require(okP, "surplus to pledgor"); }
+        emit Liquidated(toCreditor, surplus);
+    }
+"#;
+
+fn gen_rahn_test(name: &str, debt: u64, pledge_value: u64) -> String {
+    format!(
+        r#"// Generated by fiqhc — Rahn (pledge). Proves the pledge secures but does not forfeit: redemption
+// returns the whole pledge, and default liquidation gives the creditor only the debt with the
+// surplus returning to the pledgor.
+const {{ expect }} = require("chai");
+const {{ ethers }} = require("hardhat");
+
+describe("{name} (fiqhc-generated) — rahn pledge", function () {{
+  let pledgor, pledgee, c;
+  const DEBT = {debt}n, PVAL = {pledge_value}n;
+
+  beforeEach(async function () {{
+    [pledgor, pledgee] = await ethers.getSigners();
+    const F = await ethers.getContractFactory("{name}");
+    c = await F.connect(pledgor).deploy(pledgee.address, DEBT, PVAL);
+    await c.waitForDeployment();
+  }});
+
+  it("redemption: repay the debt -> the whole pledge returns to the pledgor", async function () {{
+    await c.connect(pledgor).pledge({{ value: PVAL }});
+    await expect(c.connect(pledgor).repay({{ value: DEBT }})).to.emit(c, "Redeemed").withArgs(DEBT, PVAL);
+    expect(await c.settled()).to.equal(true);
+  }});
+
+  it("surplus_to_pledgor: on default the creditor takes only the debt; surplus returns to the pledgor", async function () {{
+    await c.connect(pledgor).pledge({{ value: PVAL }});
+    await expect(c.connect(pledgee).liquidate()).to.emit(c, "Liquidated").withArgs(DEBT, PVAL - DEBT);
+  }});
+
+  it("only the pledgee may liquidate; only the pledgor may pledge", async function () {{
+    await expect(c.connect(pledgee).pledge({{ value: PVAL }})).to.be.revertedWith("only pledgor");
+  }});
+}});
+"#,
+        name = name,
+        debt = debt,
+        pledge_value = pledge_value,
+    )
+}
+
+fn rahn_descriptor(name: &str, debt: u64, pledge_value: u64) -> String {
+    format!(
+        r#"{{
+  "instrument": "rahn",
+  "regime": "islamic",
+  "contract": "{name}",
+  "operatorRole": "pledgor",
+  "oracle": null,
+  "constructorAbi": ["address","uint256","uint256"],
+  "constructorArgs": ["@pledgee", {debt}, {pledge_value}],
+  "accounts": ["pledgee"],
+  "lifecycle": [
+    {{ "as": "pledgor", "fn": "pledge", "value": {pledge_value}, "note": "escrow the marhun as security" }},
+    {{ "as": "pledgor", "fn": "repay", "value": {debt}, "note": "repay the debt; the whole pledge returns" }}
+  ],
+  "reads": ["pledged","settled"]
+}}
+"#,
+        name = name,
+        debt = debt,
+        pledge_value = pledge_value,
     )
 }
 

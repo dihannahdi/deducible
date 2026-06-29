@@ -22,6 +22,7 @@ const C_MURABAHA: &str = "murabaha (cost-plus trust sale, bay' al-amana): AAOIFI
 const C_SALAM: &str = "salam (forward sale): AAOIFI Shari'ah Standard No. 10; the Prophet ﷺ — of one who pays in advance — said let it be for a known measure and known weight to a known term (Ibn ʿAbbas — Sahih al-Bukhari, Sahih Muslim); the full price (ra's al-mal) must be paid at the session, else it is bayʿ al-kaliʾ bi-l-kaliʾ (debt for debt) [scholar-verify]";
 const C_ISTISNA: &str = "istisnaʿ (manufacture-to-order): AAOIFI Shari'ah Standard No. 11; held permissible by istihsan (the Hanafis) and adopted broadly — the masnuʿ must be described (maʿlūm) and the saniʿ supplies the materials (else it is ijarat al-ʿamal, hire of labour); unlike salam, the price MAY be deferred or paid in instalments [scholar-verify]";
 const C_SARF: &str = "ṣarf (currency/precious-metal exchange): AAOIFI Shari'ah Standard No. 1; the Prophet ﷺ — gold for gold, silver for silver... like for like, equal for equal, hand to hand; if the genera differ, sell as you wish so long as it is hand to hand (ʿUbada b. al-Ṣamit — Sahih Muslim). Same genus ⇒ equal (else riba al-faḍl); any ṣarf ⇒ spot/yadan bi-yad (else riba al-nasiʾa) [scholar-verify]";
+const C_RAHN: &str = "rahn (pledge / collateral): al-Baqarah 2:283 (a pledge taken in hand); the Prophet ﷺ pledged his armour to a Jew of Madina for barley (Sahih al-Bukhari, Sahih Muslim). The pledge secures the debt but the creditor takes NO benefit from it (the majority: a benefit to the creditor is riba on the loan), and on default the surplus over the debt returns to the pledgor — the pledge is not forfeit (lā yaghlaqu al-rahn). Held as amāna in the creditor's hand (majority; the Ḥanafīs hold it guaranteed up to the debt) [scholar-verify]";
 const C_QARD: &str = "qarḍ ḥasan (benevolent loan): al-Ḥadid 57:11 and al-Baqarah 2:245 (lending Allah a goodly loan); the loan is repaid in like WITHOUT any stipulated increase or benefit to the lender — 'every loan that draws a benefit is riba' (a well-known maxim; the marfūʿ wording is weak, but the prohibition of a stipulated increase is by ijmaʿ). An unstipulated gift (hadiyya) at repayment is permitted [scholar-verify]";
 const C_TAWARRUQ: &str = "tawarruq: the individual (fardī/classical) form is permitted by the majority — buy a commodity on credit, take possession, then sell it to a THIRD party for spot cash; but selling back to the original seller is bayʿ al-ʿīnah, and ORGANIZED tawarruq (munaẓẓam, where the financier arranges the onward sale into a ring) was forbidden by the OIC International Islamic Fiqh Academy Resolution 179 (19/5), 2009 [scholar-verify]";
 const C_ROLE: &str = "valuation must be independently attested, not self-reported [scholar-verify]";
@@ -76,6 +77,7 @@ pub enum Class {
     Sarf,
     Tawarruq,
     QardHasan,
+    Rahn,
     CommercialEscrow,
     Unknown(String),
 }
@@ -92,6 +94,7 @@ impl Class {
             "sarf" => Class::Sarf,
             "tawarruq" => Class::Tawarruq,
             "qard_hasan" => Class::QardHasan,
+            "rahn" => Class::Rahn,
             "commercial_escrow" => Class::CommercialEscrow,
             other => Class::Unknown(other.to_string()),
         }
@@ -173,6 +176,7 @@ pub fn check(spec: &Spec) -> Vec<Diagnostic> {
         Class::Sarf => check_sarf(spec, &mut d),
         Class::Tawarruq => check_tawarruq(spec, &mut d),
         Class::QardHasan => check_qard(spec, &mut d),
+        Class::Rahn => check_rahn(spec, &mut d),
         Class::CommercialEscrow => check_commercial(spec, &mut d),
         Class::Unknown(_) => {}
     }
@@ -1264,6 +1268,58 @@ fn check_qard(spec: &Spec, d: &mut Vec<Diagnostic>) {
     }
 
     require_invariants(spec, &["no_increase", "no_fee"], d);
+}
+
+// --- Rahn (pledge / collateral) ---
+//
+// The pledge (marhūn) secures a debt but is not a profit centre: the creditor takes no benefit
+// from it (RAHN-1 — else it is riba on the loan), and on default it is sold to satisfy the debt
+// with any surplus returning to the pledgor (RAHN-2 — the pledge is not forfeit). Held as amāna.
+fn check_rahn(spec: &Spec, d: &mut Vec<Diagnostic>) {
+    let pledgor = role_party(spec, "pledgor").map(|p| p.name.clone());
+    let pledgee = role_party(spec, "pledgee").map(|p| p.name.clone());
+    if pledgor.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "rahn requires a party with role 'pledgor' (al-rahin, the debtor who pledges)", C_RAHN));
+    }
+    if pledgee.is_none() {
+        d.push(Diagnostic::error("PARTY-1", spec.span, "rahn requires a party with role 'pledgee' (al-murtahin, the creditor who holds the pledge)", C_RAHN));
+    }
+    if let (Some(p), Some(q)) = (&pledgor, &pledgee) {
+        if p == q {
+            d.push(Diagnostic::error("PARTY-1", spec.span, "pledgor and pledgee must be distinct parties", C_RAHN));
+        }
+    }
+
+    match find_return(spec, "pledge") {
+        None => d.push(Diagnostic::error(
+            "RAHN-1",
+            spec.span,
+            "rahn requires returns { pledge { debt; pledge_value; creditor_use; surplus } }",
+            C_RAHN,
+        )),
+        Some(pl) => {
+            // RAHN-1: the creditor derives NO benefit from the pledge (else riba on the loan).
+            match ret_kv(pl, "creditor_use").and_then(|kv| kv.val.as_ident()) {
+                Some("none") => {}
+                Some(other) => d.push(Diagnostic::error("RAHN-1", pl.span, format!("creditor_use is '{}'; the creditor takes no benefit from the pledge — a benefit to the creditor is riba on the loan", other), C_RAHN)),
+                None => d.push(Diagnostic::error("RAHN-1", pl.span, "rahn must declare creditor_use: none (the creditor takes no benefit from the pledge)", C_RAHN)),
+            }
+            // RAHN-2: on default the surplus over the debt returns to the pledgor (no forfeiture).
+            match ret_kv(pl, "surplus").and_then(|kv| kv.val.as_ident()) {
+                Some("to_pledgor") => {}
+                Some(other) => d.push(Diagnostic::error("RAHN-2", pl.span, format!("surplus is '{}'; the pledge is not forfeit — the surplus over the debt returns to the pledgor", other), C_RAHN)),
+                None => d.push(Diagnostic::error("RAHN-2", pl.span, "rahn must declare surplus: to_pledgor (the pledge is not forfeit)", C_RAHN)),
+            }
+            // definite debt and pledge value.
+            let debt_ok = ret_kv(pl, "debt").and_then(|kv| kv.val.as_num()).map(|n| n > 0).unwrap_or(false);
+            let val_ok = ret_kv(pl, "pledge_value").and_then(|kv| kv.val.as_num()).map(|n| n > 0).unwrap_or(false);
+            if !debt_ok || !val_ok {
+                d.push(Diagnostic::error("RAHN-3", pl.span, "rahn must declare a positive debt and pledge_value", C_RAHN));
+            }
+        }
+    }
+
+    require_invariants(spec, &["no_creditor_benefit", "surplus_to_pledgor"], d);
 }
 
 // --- Ijarah Muntahia Bittamleek ---

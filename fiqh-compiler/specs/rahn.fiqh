@@ -1,0 +1,35 @@
+// Rahn (pledge / collateral). The pledgor (al-rahin) pledges an asset (marhun) to secure a debt
+// held by the pledgee (al-murtahin). The pledge is security, not a profit centre: the creditor
+// takes no benefit from it (a benefit to the creditor would be riba on the loan), and on default
+// it is sold to satisfy the debt with any surplus returning to the pledgor — the pledge is not
+// forfeit. Held as amana. Citations [scholar-verify].
+
+instrument Rahn : rahn {
+  meta {
+    basis: "rahn: al-Baqarah 2:283; the Prophet pledged his armour for barley (Bukhari/Muslim)";   // [scholar-verify]
+    currency: tinybar;
+  }
+
+  parties {
+    debtor   : pledgor;     // al-rahin
+    creditor : pledgee;     // al-murtahin
+  }
+
+  returns {
+    pledge {
+      debt:         1000000;
+      pledge_value: 1200000;    // the marhun escrowed as security
+      creditor_use: none;       // the creditor derives NO benefit from the pledge (else riba)
+      surplus:      to_pledgor; // on default, surplus over the debt returns to the pledgor
+      liability:    amanah;     // the pledge is a trust in the creditor's hand (majority view)
+    }
+  }
+
+  invariant no_creditor_benefit { pledge.creditor_use == none }
+  invariant surplus_to_pledgor  { pledge.surplus == to_pledgor }
+
+  lifecycle {
+    pledge;   // debtor escrows the marhun as security
+    repay;    // debtor repays the debt -> the whole pledge is returned
+  }
+}

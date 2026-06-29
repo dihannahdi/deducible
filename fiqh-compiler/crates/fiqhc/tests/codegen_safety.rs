@@ -15,6 +15,7 @@ const SPECS: &[&str] = &[
     include_str!("../../../specs/sarf.fiqh"),
     include_str!("../../../specs/tawarruq.fiqh"),
     include_str!("../../../specs/qard_hasan.fiqh"),
+    include_str!("../../../specs/rahn.fiqh"),
     include_str!("../../../specs/commercial_escrow.fiqh"),
 ];
 
