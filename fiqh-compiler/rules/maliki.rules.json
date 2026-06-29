@@ -1,0 +1,36 @@
+{
+  "authority": "Maliki madhhab",
+  "version": "classical",
+  "note": "Madhhab-level rule module (pure data). The Malikis (with the Shafi'is) hold that in a capital partnership the profit share must TRACK the capital share — a partner may not take profit beyond his capital ratio merely by stipulation — so this module REQUIRES the extra invariant `profit_tracks_capital`. This is the live khilaf with the Hanafi/Hanbali modules. Citations from Malik (al-Muwatta) and Ibn Rushd (Bidayat al-Mujtahid); flagged [scholar-verify].",
+  "regimes": {
+    "islamic": {
+      "classes": {
+        "musharakah_mutanaqisah": {
+          "required_invariants": ["ownership_conserved", "rent_on_living_share", "loss_follows_capital", "price_attested", "profit_tracks_capital"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "Ibn Rushd, Bidayat al-Mujtahid (no guarantee) [scholar-verify]" },
+            { "code": "RISK-1", "field": "risk.loss", "op": "eq", "value": "proportional_to_ownership", "citation": "Malik, al-Muwatta — loss by capital [scholar-verify]" },
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "ne", "value": "principal", "citation": "al-Baqarah 2:275 [scholar-verify]" },
+            { "code": "GHARAR-1", "field": "returns.buyout.priceSource", "op": "eq", "value": "oracle", "citation": "prohibition of gharar [scholar-verify]" }
+          ]
+        },
+        "mudarabah": {
+          "required_invariants": ["capital_from_rabb_al_mal_only", "profit_by_ratio", "loss_on_rabb_al_mal", "no_guaranteed_profit"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "Ibn Rushd, Bidayat al-Mujtahid (qirad) [scholar-verify]" },
+            { "code": "RISK-2", "field": "risk.loss", "op": "eq", "value": "on_rabb_al_mal", "citation": "Malik, al-Muwatta — al-qirad [scholar-verify]" },
+            { "code": "PROFIT-1", "field": "returns.profit.split", "op": "eq", "value": "ratio", "citation": "profit by an agreed ratio [scholar-verify]" }
+          ]
+        },
+        "ijarah_imbt": {
+          "required_invariants": ["rent_for_usufruct", "lessor_bears_ownership_risk", "transfer_separate_from_lease", "no_late_penalty_interest"],
+          "constraints": [
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "eq", "value": "usufruct", "citation": "ijarah on manfa'a [scholar-verify]" },
+            { "code": "RISK-3", "field": "risk.loss", "op": "eq", "value": "on_lessor", "citation": "the owner bears the asset risk [scholar-verify]" },
+            { "code": "RIBA-3", "field": "returns.rent.late_penalty", "op": "eq", "value": "none", "citation": "no interest on a debt [scholar-verify]" }
+          ]
+        }
+      }
+    }
+  }
+}

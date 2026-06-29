@@ -1,0 +1,36 @@
+{
+  "authority": "Hanafi madhhab",
+  "version": "classical",
+  "note": "Madhhab-level rule module (pure data). The Hanafis permit a partner's profit share to exceed his capital share by free stipulation (profit by agreement; loss by capital) — so `profit_tracks_capital` is NOT required here. Citations from al-Sarakhsi (al-Mabsut) and al-Kasani (Bada'i' al-Sana'i'); flagged [scholar-verify], to be ratified by qualified Hanafi scholars.",
+  "regimes": {
+    "islamic": {
+      "classes": {
+        "musharakah_mutanaqisah": {
+          "required_invariants": ["ownership_conserved", "rent_on_living_share", "loss_follows_capital", "price_attested"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "al-Baqarah 2:275; al-Kasani, Bada'i' (no guarantee of capital) [scholar-verify]" },
+            { "code": "RISK-1", "field": "risk.loss", "op": "eq", "value": "proportional_to_ownership", "citation": "al-Sarakhsi, al-Mabsut — al-wadi'a 'ala qadr al-mal [scholar-verify]" },
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "ne", "value": "principal", "citation": "al-Baqarah 2:275 [scholar-verify]" },
+            { "code": "GHARAR-1", "field": "returns.buyout.priceSource", "op": "eq", "value": "oracle", "citation": "prohibition of gharar [scholar-verify]" }
+          ]
+        },
+        "mudarabah": {
+          "required_invariants": ["capital_from_rabb_al_mal_only", "profit_by_ratio", "loss_on_rabb_al_mal", "no_guaranteed_profit"],
+          "constraints": [
+            { "code": "RIBA-1", "field": "risk.capital_guarantee", "op": "eq", "value": "none", "citation": "al-Kasani, Bada'i' al-Sana'i' [scholar-verify]" },
+            { "code": "RISK-2", "field": "risk.loss", "op": "eq", "value": "on_rabb_al_mal", "citation": "al-Sarakhsi, al-Mabsut [scholar-verify]" },
+            { "code": "PROFIT-1", "field": "returns.profit.split", "op": "eq", "value": "ratio", "citation": "profit by an agreed ratio [scholar-verify]" }
+          ]
+        },
+        "ijarah_imbt": {
+          "required_invariants": ["rent_for_usufruct", "lessor_bears_ownership_risk", "transfer_separate_from_lease", "no_late_penalty_interest"],
+          "constraints": [
+            { "code": "RIBA-2", "field": "returns.rent.basis", "op": "eq", "value": "usufruct", "citation": "ijarah on manfa'a — al-Mabsut [scholar-verify]" },
+            { "code": "RISK-3", "field": "risk.loss", "op": "eq", "value": "on_lessor", "citation": "the owner bears the asset risk [scholar-verify]" },
+            { "code": "RIBA-3", "field": "returns.rent.late_penalty", "op": "eq", "value": "none", "citation": "no interest on a debt [scholar-verify]" }
+          ]
+        }
+      }
+    }
+  }
+}
