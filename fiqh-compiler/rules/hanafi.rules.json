@@ -2,6 +2,16 @@
   "authority": "Hanafi madhhab",
   "version": "classical",
   "note": "Madhhab-level rule module (pure data). The Hanafis permit a partner's profit share to exceed his capital share by free stipulation (profit by agreement; loss by capital) — so `profit_tracks_capital` is NOT required here. Citations from al-Sarakhsi (al-Mabsut) and al-Kasani (Bada'i' al-Sana'i'); flagged [scholar-verify], to be ratified by qualified Hanafi scholars.",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": ["al-Sarakhsi, al-Mabsut", "al-Kasani, Bada'i' al-Sana'i'", "al-Baqarah 2:275"],
+    "translator": "engineering draft — encoded from the cited classical works by the project maintainers; not yet reviewed or ratified by qualified Hanafi scholars",
+    "content_hash_at_last_edit": "a5b71a7949b79500daab72a0a68d5f4b41967049549cc371baa1ce787fb52517",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

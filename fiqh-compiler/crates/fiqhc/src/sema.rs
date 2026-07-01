@@ -11,6 +11,7 @@
 
 use crate::ast::*;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 // --- citations (all flagged for human takhrij) ---
 const C_RIBA: &str = "Qur'an al-Baqarah 2:275; AAOIFI Shari'ah Standard No. 12 [scholar-verify]";
@@ -2179,6 +2180,108 @@ impl RuleSet {
     pub fn label(&self) -> String {
         format!("{} {}", self.authority, self.version)
     }
+
+    /// The content hash of this module's jurisprudential content (the `regimes` tree —
+    /// classes, invariants, constraints, citations), independent of the `ratification`
+    /// metadata that pins against it. `serde_json`'s default `Map` is a `BTreeMap` (this
+    /// crate does not enable the `preserve_order` feature), so key order is already
+    /// canonical and the serialization is stable across re-parses of the same content.
+    pub fn compute_content_hash(&self) -> String {
+        content_hash(&self.json)
+    }
+
+    /// Verify the module's `ratification` block: tamper-evidence for a module that
+    /// claims to be ratified, and a visible, non-blocking signal for one that does not.
+    ///
+    /// This does NOT and cannot verify that the JSON is a faithful encoding of the cited
+    /// fatwa or standard — whether `{"op":"eq","field":"risk.loss","value":"proportional_to_ownership"}`
+    /// truly captures AAOIFI SS No. 12 is a scholar's judgment, not a computable property.
+    /// It verifies the narrower, mechanical thing a compiler CAN guarantee: that the content a
+    /// named authority signed off on, on a stated date, over a stated hash, is byte-for-byte the
+    /// content actually loaded. "Ratification becomes a module, not a fork" only holds if a
+    /// fork of a ratified module is detectable — this is what makes it detectable.
+    pub fn verify_ratification(&self, span: Span) -> Vec<Diagnostic> {
+        let mut d = Vec::new();
+        let rat = &self.json["ratification"];
+        if rat.is_null() {
+            d.push(Diagnostic::warn(
+                "RULES-3",
+                span,
+                format!(
+                    "rule module '{}' carries no ratification block — no board or standards body is on record as having signed off on this JSON encoding; treat its verdicts as draft, not compliance-grade [scholar-verify]",
+                    self.label()
+                ),
+                "",
+            ));
+            return d;
+        }
+        let status = rat["status"].as_str().unwrap_or("draft");
+        if status != "ratified" {
+            d.push(Diagnostic::warn(
+                "RULES-3",
+                span,
+                format!(
+                    "rule module '{}' has ratification status '{}' — no board has yet ratified this encoding; treat its verdicts as draft, not compliance-grade [scholar-verify]",
+                    self.label(),
+                    status
+                ),
+                "",
+            ));
+            return d;
+        }
+        let by = rat["ratified_by"].as_str().unwrap_or("<unrecorded>");
+        let on = rat["ratification_date"].as_str().unwrap_or("<unrecorded>");
+        match rat["sha256_of_module"].as_str() {
+            None => d.push(Diagnostic::error(
+                "RULES-2",
+                span,
+                format!(
+                    "rule module '{}' claims ratification status 'ratified' but declares no sha256_of_module to pin against — a ratification without a content hash cannot be checked for tampering and must not be trusted",
+                    self.label()
+                ),
+                "",
+            )),
+            Some(claimed) => {
+                let actual = self.compute_content_hash();
+                if actual != claimed {
+                    d.push(Diagnostic::error(
+                        "RULES-2",
+                        span,
+                        format!(
+                            "rule module '{}' was ratified by {} on {} over content hash {}, but its content now hashes to {} — this module has been altered since ratification; its verdicts are not to be trusted until it is re-ratified",
+                            self.label(),
+                            by,
+                            on,
+                            claimed,
+                            actual
+                        ),
+                        "",
+                    ));
+                }
+            }
+        }
+        d
+    }
+}
+
+/// SHA-256 of the module's `regimes` subtree, hex-encoded. Factored out of `RuleSet` so
+/// `compute_content_hash` can be called before or after the `ratification` block is added —
+/// the hash is computed over jurisprudential content only, never over the ratification
+/// metadata that records it (which would make the hash unstatable: adding the hash to the
+/// document would change the document, which would change the hash).
+fn content_hash(json: &Value) -> String {
+    let canonical = json["regimes"].to_string();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    to_hex(&hasher.finalize())
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{:02x}", b));
+    }
+    s
 }
 
 /// Resolve a dotted field path to the value the spec actually declares (as a string), so a
@@ -2239,7 +2342,7 @@ fn eval_op(op: &str, got: Option<&str>, want: &Value) -> bool {
 
 /// Check a spec against a pluggable rule-base. Same engine, any authority's module.
 pub fn check_with_ruleset(spec: &Spec, rs: &RuleSet) -> Vec<Diagnostic> {
-    let mut d = Vec::new();
+    let mut d = rs.verify_ratification(spec.span);
     let class = Class::from_str(&spec.class);
     if let Class::Unknown(s) = &class {
         d.push(Diagnostic::error("CLASS-1", spec.span, format!("unknown instrument class '{}'", s), ""));

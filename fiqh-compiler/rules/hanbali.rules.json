@@ -2,6 +2,16 @@
   "authority": "Hanbali madhhab",
   "version": "classical",
   "note": "Madhhab-level rule module (pure data). Like the Hanafis, the Hanbalis permit profit by free stipulation (it need not track capital) — so `profit_tracks_capital` is NOT required. Citations from Ibn Qudamah (al-Mughni); flagged [scholar-verify], to be ratified by qualified Hanbali scholars.",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": ["Ibn Qudamah, al-Mughni", "al-Baqarah 2:275"],
+    "translator": "engineering draft — encoded from the cited classical work by the project maintainers; not yet reviewed or ratified by qualified Hanbali scholars",
+    "content_hash_at_last_edit": "2b18a51d22b52eee8f1315ac0fb1ced84e22b3049e2c007ce02cb37a01e28d59",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

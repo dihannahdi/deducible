@@ -2,6 +2,21 @@
   "authority": "DSN-MUI",
   "version": "2000-2007",
   "note": "Indonesian authority module. Same engine, different rule-base — demonstrating pluggable jurisprudence. Fatwa numbers and the extra `nisbah_explicit` requirement are ILLUSTRATIVE of jurisdictional divergence and must be ratified by DSN-MUI; flagged [scholar-verify].",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": [
+      "DSN-MUI Fatwa No. 07/DSN-MUI/IV/2000 (Pembiayaan Mudharabah)",
+      "DSN-MUI Fatwa No. 08/DSN-MUI/IV/2000 (Pembiayaan Musyarakah)",
+      "DSN-MUI Fatwa No. 27/DSN-MUI/III/2002 (IMBT)",
+      "al-Baqarah 2:275"
+    ],
+    "translator": "engineering draft — encoded from the cited fatwas by the project maintainers; not yet reviewed or ratified by the Dewan Syariah Nasional MUI",
+    "content_hash_at_last_edit": "4328d5fef98dbbe770c2cebd2bad12080546df42c693de0da117ea8f86ddef19",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

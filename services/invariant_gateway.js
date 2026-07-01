@@ -6,19 +6,28 @@
 //   node services/invariant_gateway.js     (binds 127.0.0.1:8799 inside the container)
 //
 // Endpoints:
-//   GET  /              dashboard
-//   GET  /manifests     list loaded invariant manifests
-//   POST /enforce       { target, terms } -> { allowed, violations:[{code,field,expected,got,citation}] }
-//   POST /compile       { spec }          -> runs `fiqhc check` and returns the verdict
+//   GET  /                    dashboard
+//   GET  /manifests           list loaded invariant manifests
+//   POST /enforce             { target, terms } -> { allowed, violations:[{code,field,expected,got,citation}] }
+//   POST /compile             { spec }          -> runs `fiqhc check` and returns the verdict
+//   POST /attest              { target, terms } -> re-checks + appends a tamper-evident conformance
+//                              record (see conformance.js); closes the formation-vs-execution gap
+//                              for the "gateway in front of an existing core banking system" mode
+//   GET  /conformance/:target -> the attestation history for one target, with drift surfaced and
+//                              the hash chain's integrity verified
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 const ahliyyah = require("./ahliyyah");
+const conformance = require("./conformance");
 
 const OUT = path.join(__dirname, "..", "fiqh-compiler", "out");
-const FIQHC = path.join(__dirname, "..", "fiqh-compiler", "target", "debug", "fiqhc");
+// The compiled binary is `deduce` (brand: Deducible; internal crate/bin history: fiqhc) —
+// `.exe` on Windows, no extension elsewhere.
+const FIQHC = path.join(__dirname, "..", "fiqh-compiler", "target", "debug", process.platform === "win32" ? "deduce.exe" : "deduce");
 const DID_REGISTRY = path.join(__dirname, "did_registry.json");
+const CONFORMANCE_DIR = path.join(__dirname, "conformance-log");
 const PORT = process.env.GATEWAY_PORT || 8799;
 
 function loadDids() {
@@ -145,6 +154,49 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       return send(400, { error: String(e) });
     }
+  }
+  if (req.method === "POST" && req.url === "/attest") {
+    try {
+      const { target, terms } = JSON.parse(await readBody(req));
+      const m = loadManifests()[target];
+      if (!m) return send(404, { error: "no manifest for '" + target + "'", available: Object.keys(loadManifests()) });
+      const enforcement = enforce(m, terms || {});
+      const constrainedFields = (m.constraints || []).map((c) => c.field);
+      const entry = conformance.attest(CONFORMANCE_DIR, target, terms || {}, enforcement, constrainedFields);
+      return send(200, {
+        allowed: entry.allowed,
+        violations: entry.violations,
+        seq: entry.seq,
+        is_baseline: entry.seq === 0,
+        drift: entry.drift,
+        note:
+          "this attestation is now part of the tamper-evident conformance log for '" +
+          target +
+          "'; GET /conformance/" +
+          target +
+          " for the full history. Re-attestation is only as good as how often the live system is made to submit one — that cadence is an operational/audit-policy requirement, not something this endpoint can enforce.",
+      });
+    } catch (e) {
+      return send(400, { error: String(e) });
+    }
+  }
+  if (req.method === "GET" && req.url.startsWith("/conformance/")) {
+    const target = decodeURIComponent(req.url.slice("/conformance/".length));
+    const entries = conformance.readLog(CONFORMANCE_DIR, target);
+    if (!entries.length) return send(404, { error: "no conformance history for '" + target + "' — POST /attest at least once first" });
+    const integrity = conformance.verifyChain(entries);
+    const everUnconstrainedDrift = Array.from(
+      new Set(entries.flatMap((e) => (e.drift && e.drift.unconstrained_drift) || []))
+    );
+    return send(200, {
+      target,
+      entries,
+      chain_intact: integrity.ok,
+      broken_at_seq: integrity.brokenAtSeq,
+      ever_had_unconstrained_drift: everUnconstrainedDrift,
+      note:
+        "chain_intact=false means a past entry was edited, reordered, or removed outside this service — treat the whole log as suspect from broken_at_seq onward. ever_had_unconstrained_drift lists fields that changed since the baseline attestation but that the rule module does not constrain, so a violation there was never possible; it is visibility for an auditor, not a refusal.",
+    });
   }
   if (req.method === "POST" && req.url === "/compile") {
     try {

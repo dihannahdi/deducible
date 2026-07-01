@@ -11,6 +11,7 @@ bundle InahDisguised {
   meta {
     basis: "two sales composing a loan — the 'inah ruse";
     regime: islamic;
+    completeness_attestation: "test fixture — both legs of the negative control are declared";
   }
 
   parties {

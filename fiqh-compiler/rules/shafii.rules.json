@@ -2,6 +2,16 @@
   "authority": "Shafi'i madhhab",
   "version": "classical",
   "note": "Madhhab-level rule module (pure data). The Shafi'is (with the Malikis) hold that profit in a capital partnership must track the capital ratio — hence this module REQUIRES `profit_tracks_capital`, diverging from the Hanafi/Hanbali modules. Citations from al-Shafi'i (al-Umm) and al-Nawawi (al-Majmu'); flagged [scholar-verify].",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": ["al-Shafi'i, al-Umm", "al-Nawawi, al-Majmu'", "al-Baqarah 2:275"],
+    "translator": "engineering draft — encoded from the cited classical works by the project maintainers; not yet reviewed or ratified by qualified Shafi'i scholars",
+    "content_hash_at_last_edit": "86500093ac059eea0d57c00b2b5383c27e5f1a4857ca4fb37cad0ea189e6a22a",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

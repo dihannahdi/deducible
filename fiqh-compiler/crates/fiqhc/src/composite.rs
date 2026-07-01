@@ -18,6 +18,18 @@
 //! citation-bearing rule-base. It issues no fatwa. The classification of 'inah and
 //! organized tawarruq as impermissible is the scholars' (cited below, flagged
 //! `[scholar-verify]`); the engine only detects the structure they named.
+//!
+//! A boundary the graph analysis cannot lift itself over: it proves a ring absent *from the
+//! legs it was given*. A financier who structures an organized tawarruq across several
+//! institutions so that no single submitter sees the full ring defeats this by construction,
+//! not by any flaw in the cycle search. Two mitigations follow, both of which raise the cost
+//! of concealment rather than claim to remove it: (1) `BUNDLE-2` requires an explicit,
+//! attributed completeness attestation before a bundle may be certified free of cycles, so
+//! "no ring found" always carries a falsifiable claim of "and I attest I showed you
+//! everything I know of" rather than silent, unattributed omission; (2) the dangling-leg
+//! pass (`MAQASID-3`) flags a party who takes on a deferred debt for an asset with no
+//! matching disposal leg anywhere in the bundle — the topological signature of a ring whose
+//! remainder lives outside what was submitted.
 
 use crate::ast::*;
 use crate::sema::Diagnostic;
@@ -183,6 +195,26 @@ pub fn check_bundle(b: &Bundle) -> Vec<Diagnostic> {
         ));
     }
 
+    let completeness_ok = b
+        .meta()
+        .iter()
+        .find(|k| k.key == "completeness_attestation")
+        .and_then(|k| k.val.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    if !completeness_ok {
+        d.push(Diagnostic::error(
+            "BUNDLE-2",
+            b.span,
+            "a bundle must declare meta { completeness_attestation: \"...\"; }, an attributed \
+             statement that the submitting party has represented every leg of this transaction \
+             known to them. The engine can prove a ring absent from the legs it was given; it \
+             cannot prove a ring absent from legs it was never shown. A cycle-free verdict without \
+             this attestation is not a verdict — it is silence about what was omitted, by whom.",
+            "",
+        ));
+    }
+
     let flows = build_flows(b, &mut d);
     if flows.is_empty() {
         d.push(Diagnostic::error(
@@ -332,6 +364,41 @@ fn analyze_flows(flows: &[FlowLeg], bundle_span: Span, d: &mut Vec<Diagnostic>) 
         }
     }
 
+    // Dangling-leg pass: a party who takes on a deferred debt for an asset with NO matching
+    // disposal leg anywhere in this bundle — neither a buy-back (INAH-1/2) nor a spot flip
+    // (the monetization pass above, which requires BOTH legs present to fire). Absence of a
+    // ring in this bundle is not proof of absence: the debtor's next move may be booked at a
+    // different institution or venue this bundle does not represent. This is a maqsad-risk
+    // signal, not a structural violation — it never blocks, only names what to ask about.
+    for party in &parties {
+        for asset in &assets {
+            if inah_pairs.contains(&(party.clone(), asset.clone())) {
+                continue;
+            }
+            let in_deferred = flows.iter().find(|f| &f.to == party && &f.asset == asset && f.deferred);
+            let has_any_disposal = flows.iter().any(|f| &f.from == party && &f.asset == asset);
+            if let Some(inf) = in_deferred {
+                if !has_any_disposal {
+                    d.push(Diagnostic::warn(
+                        "MAQASID-3",
+                        inf.span,
+                        format!(
+                            "'{}' takes on asset '{}' via deferred leg '{}' with no disposal of that \
+                             asset declared anywhere in this bundle. This bundle cannot see what happens \
+                             to it next. If the disposal is booked through a venue or party not \
+                             represented here, an organized-tawarruq ring could complete outside this \
+                             bundle's view. A scholar or auditor should confirm the disposal, if any, \
+                             independently.",
+                            party, asset, inf.id
+                        ),
+                        "the completeness of a bundle is what its submitter attests, not what the \
+                         graph search can independently verify [scholar-verify]",
+                    ));
+                }
+            }
+        }
+    }
+
     let flagged = d.iter().any(|x| x.is_error());
     FlowReport { cycles: all_cycles, flagged }
 }
@@ -369,6 +436,19 @@ pub fn build_manifest(b: &Bundle) -> String {
         })
         .collect();
 
+    let maqasid_warnings: Vec<serde_json::Value> = diags
+        .iter()
+        .filter(|x| !x.is_error() && x.code.starts_with("MAQASID"))
+        .map(|x| serde_json::json!({ "code": x.code, "message": x.message, "citation": x.citation }))
+        .collect();
+
+    let completeness_attestation = b
+        .meta()
+        .iter()
+        .find(|k| k.key == "completeness_attestation")
+        .and_then(|k| k.val.as_str())
+        .map(|s| s.to_string());
+
     let manifest = serde_json::json!({
         "kind": "composite_invariant_manifest",
         "bundle": b.name,
@@ -376,7 +456,9 @@ pub fn build_manifest(b: &Bundle) -> String {
         "cycles_detected": report.cycles.len(),
         "consistent": !report.flagged,
         "violations": violations,
-        "note": "no riba cycle (bay' al-'inah / organized tawarruq) by composition; consistency is not a fatwa",
+        "completeness_attestation": completeness_attestation,
+        "maqasid_warnings": maqasid_warnings,
+        "note": "no riba cycle (bay' al-'inah / organized tawarruq) by composition, AMONG THE LEGS ATTESTED COMPLETE; consistency is not a fatwa, and completeness is the submitter's claim, not an independently verified fact",
     });
     serde_json::to_string_pretty(&manifest).unwrap_or_else(|_| "{}".to_string())
 }

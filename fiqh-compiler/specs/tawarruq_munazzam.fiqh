@@ -12,6 +12,7 @@ bundle TawarruqMunazzam {
   meta {
     basis: "organized tawarruq — monetizing a commodity through an arranged ring";
     regime: islamic;
+    completeness_attestation: "test fixture — all three legs of the negative control are declared";
   }
 
   parties {

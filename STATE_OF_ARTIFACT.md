@@ -114,3 +114,32 @@ with a regime-neutral judiciary (#3), and **injectable into any ledger or databa
 `agents/`, `contracts/ConsensusValuationOracle.sol`. Paper §10–§12 in
 `paper/algorithmic_jurisprudence.md`. The institutional gate — scholarly/legal ratification and
 adoption — remains, honestly, with people. *Allahu a'lam.*
+
+Note: several later phases (the whole-economy expansion to ~27 contract classes, the four madhhab
+rule modules, the JIMF submission) landed after this entry and are not logged here iteration-by-
+iteration — see the project memory / paper drafts for that history. The entry below is a direct
+response to an external critique of the artifact, not a renumbered continuation of the sequence
+above, hence the switch to a dated header.
+
+---
+
+## Update (2026-07-01) — closing three gaps named by an external critique
+
+A critique of the project (not a loop iteration) named three places where the artifact's own
+honesty about its limits could be made structural rather than left as prose. Each is closed to the
+degree a compiler *can* close it — none of them manufacture certainty the underlying trust problem
+doesn't allow; each raises the cost of the failure mode instead of claiming to remove it.
+
+| # | Gap named | Mechanism | Verification |
+|---|-----------|-----------|--------------|
+| R1 | "Ratification becomes a module, not a fork" had no way to detect a fork | `ratification` block per rule module (`status`, `ratified_by`, `ratification_date`, `sha256_of_module` over the `regimes` subtree only); `RULES-2` (error) on a ratified-but-tampered/unhashed module, `RULES-3` (warn) on an unratified/draft one; `fiqhc rules verify\|hash` | `crates/fiqhc/tests/ratification.rs`, 6 tests; all six shipped modules honestly marked `status: "draft"` (none has actually been ratified by a board) |
+| R2 | The bay' al-'inah / organized-tawarruq graph check proves a ring absent only from the legs it was shown — an adversary who splits a ring across institutions defeats it by construction | `BUNDLE-2`: a bundle must carry an attributed `completeness_attestation` before a cycle-free verdict is issued; `MAQASID-3`: a party who takes a deferred debt for an asset with no disposal shown anywhere in the bundle is warned (not blocked) as the topological signature a hidden ring would leave | `crates/fiqhc/tests/composite.rs`, 4 new tests; all three shipped bundle specs updated |
+| R3 | The gateway's `/enforce` was a one-time formation check; nothing re-verified a booked product against its approved manifest afterward, so the paper's own opening gap (board vs. contract vs. executed logic) could reopen silently in the "gateway in front of an unchanged core system" deployment mode | `services/conformance.js` + gateway `POST /attest` / `GET /conformance/:target`: a hash-chained, append-only attestation log per instrument; rule-covered drift is caught by the existing `enforce()` verdict, drift outside the rule module's declared fields is surfaced (not blocked) as `unconstrained_drift`, and editing a past entry breaks the chain detectably | `services/conformance_smoke.js`, 11 checks, incl. a deliberately tampered entry breaking `chain_intact` |
+
+None of these make the underlying trust relocatable to code: R1 still requires a real board to
+actually ratify a module (all six remain drafts); R2 still requires an honest attestation and
+cannot see a ring an adversary keeps fully external to the bundle; R3 still requires an institution
+or supervisor to actually impose a re-attestation cadence — the endpoint cannot compel its own use.
+What changes is that each failure mode now leaves a trace: a tampered module, an unattested bundle,
+or a silently drifted product are things the artifact can now be asked to show, rather than things
+it had no vocabulary for. *Allahu a'lam.*

@@ -2,6 +2,16 @@
   "authority": "Maliki madhhab",
   "version": "classical",
   "note": "Madhhab-level rule module (pure data). The Malikis (with the Shafi'is) hold that in a capital partnership the profit share must TRACK the capital share — a partner may not take profit beyond his capital ratio merely by stipulation — so this module REQUIRES the extra invariant `profit_tracks_capital`. This is the live khilaf with the Hanafi/Hanbali modules. Citations from Malik (al-Muwatta) and Ibn Rushd (Bidayat al-Mujtahid); flagged [scholar-verify].",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": ["Malik, al-Muwatta", "Ibn Rushd, Bidayat al-Mujtahid", "al-Baqarah 2:275"],
+    "translator": "engineering draft — encoded from the cited classical works by the project maintainers; not yet reviewed or ratified by qualified Maliki scholars",
+    "content_hash_at_last_edit": "59d7e7fd7ff32115fb6f3341983d0d2133b4e66cebd533e648d04f7387106a38",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

@@ -216,7 +216,84 @@ spec against it (`fiqhc check --rules <name>` or `meta { rules: "<name>"; }`). S
 may be refused under another (e.g. DSN-MUI's extra `nisbah_explicit`) — pluggable jurisprudence.
 `RULES-1` is raised when a module has no entry for the class.
 
-## 9. Code generation
+### 8.1 Ratification: tamper-evidence for a module, not a fork
+
+"Ratification becomes a module, not a fork" (rule-modules.md) only holds if a fork of a ratified
+module is *detectable*. A module MAY carry a top-level `ratification` block:
+
+```jsonc
+{
+  "authority": "AAOIFI", "version": "2017",
+  "ratification": {
+    "status": "draft" | "ratified",
+    "ratified_by": "<board/authority name>" | null,
+    "ratification_date": "YYYY-MM-DD" | null,
+    "source_refs": ["…"],
+    "sha256_of_module": "<hex>" | null,
+    "supersedes": "<hex of a prior module this replaces>" | null
+  },
+  "regimes": { … }
+}
+```
+`sha256_of_module` is the SHA-256, hex-encoded, of the module's `regimes` subtree ONLY — never the
+`ratification` block itself, so adding a ratification record cannot change the hash it pins.
+`fiqhc rules hash <module.json>` prints the current value; a ratifying authority computes it,
+reviews the content it hashes, and pastes it into `sha256_of_module` alongside `status: "ratified"`.
+`fiqhc rules verify <module.json>` (also run automatically inside `check_with_ruleset`, i.e. on every
+`check`/`build` that selects a `--rules` module) reports:
+- `RULES-3` (warning) — no `ratification` block, or `status` is not `"ratified"`: the module's
+  verdicts are draft, not compliance-grade. Does not block `check`/`build`.
+- `RULES-2` (error) — `status: "ratified"` but `sha256_of_module` is absent, OR present and not
+  equal to the module's current content hash: the module was edited after ratification (or never
+  had a hash to pin against in the first place). Blocks `check`/`build` when this ruleset is loaded.
+
+This verifies only that the content a named authority signed off on is the content actually
+loaded — byte for byte. It cannot and does not verify that the JSON is a *faithful* encoding of the
+cited fatwa or standard; that translation is itself a scholar's judgment, not a computable property
+[scholar-verify].
+
+## 9. Composite bundles (al-'uqud al-murakkabah)
+
+A single leg can be impeccable while their *composition* encodes a ruse (bay' al-'inah,
+organized tawarruq) that no per-contract check can see. A compilation unit MAY be a `bundle`
+instead of an `instrument`:
+
+```
+bundle <Name> {
+  meta { basis: "…"; regime: islamic; completeness_attestation: "…"; }
+  parties { <name>: <role>; … }
+  legs {
+    <id>: <kind> { from: <party>; to: <party>; asset: <ident>; payment: spot | deferred; price: <num>; }
+    …
+  }
+}
+```
+`fiqhc check`/`build` detect a `bundle` unit automatically and route it to the graph-based checker
+(`composite.rs`) instead of the single-instrument engine (§7). The checker builds a directed
+asset-flow graph across the legs, enumerates its simple cycles per asset, and refuses a cycle whose
+legs mix a deferred settlement with a price differential — the time/price asymmetry that carries
+riba — as `INAH-1` (a two-party buy-back) or `INAH-2` (a longer ring: organized tawarruq). A
+separate monetization pass catches the non-cyclic case: a party who takes an asset on deferred
+terms and disposes of it spot to a third party is refused as `INAH-2` even with no closed loop.
+
+**`meta { completeness_attestation }` is required** (`BUNDLE-2` if absent or blank): an attributed
+statement that the submitter has represented every leg of the transaction known to them. The graph
+search proves a ring absent *from the legs it was given* — it cannot prove a ring absent from legs
+it was never shown (a financier splitting an organized-tawarruq ring across institutions specifically
+defeats any single submitter's view). The attestation does not make concealment impossible; it makes
+"no ring found" a falsifiable claim attributed to someone, rather than silent, unattributed omission.
+
+A `MAQASID-3` warning (never blocking) flags a dangling leg: a party who takes on a deferred debt
+for an asset with no disposal of that asset declared anywhere in the bundle. This is the topological
+signature a hidden ring would leave — but it is equally the signature of a legitimate end consumer
+who simply keeps the asset, so it warns rather than refuses; a scholar or auditor judges which.
+
+`fiqhc build --target manifest` on a bundle emits a `composite_invariant_manifest` (`kind`, `bundle`,
+`legs`, `cycles_detected`, `consistent`, `violations`, `completeness_attestation`,
+`maqasid_warnings`) for the invariant gateway (`services/invariant_gateway.js`) to re-check the same
+structural invariant on a backend that cannot express a compile-time graph check itself.
+
+## 10. Code generation
 
 Reached only after a clean check. Targets (`codegen.rs`, selected by `fiqhc build --target`):
 - **solidity** — a Solidity 0.8.24 contract per class (immutable parties, `BPS` basis points,
@@ -227,21 +304,24 @@ Reached only after a clean check. Targets (`codegen.rs`, selected by `fiqhc buil
 - **manifest** — a portable JSON invariant manifest (`{code, field, op, value, citation}`) for
   enforcement on any ledger or traditional database via the invariant gateway.
 
-## 10. Tooling surface
+## 11. Tooling surface
 
 ```
 fiqhc parse <f.fiqh>             dump the AST
-fiqhc check <f.fiqh> [--rules R] run the engine (built-in or a pluggable module)
+fiqhc check <f.fiqh> [--rules R] run the engine (built-in or a pluggable module); routes a
+                                  `bundle` unit to the composite/graph checker automatically
 fiqhc build <f.fiqh> [--target solidity|manifest|all] [--root DIR]
 fiqhc nl    <f.txt>              draft a spec from natural language (experimental, LLM)
 fiqhc lsp                        Language Server over stdio (editors)
 fiqhc fuzz  [N]                  fuzz the front-end + engine
+fiqhc rules verify <module.json> check a rule module's ratification (§8.1): RULES-2 / RULES-3
+fiqhc rules hash <module.json>   print a rule module's current content hash
 ```
 The engine is also exposed as a C-ABI / WebAssembly surface (`crates/fiqhc-ffi`:
 `fiqh_alloc/fiqh_free/fiqh_check_json/fiqh_free_cstr`) for in-browser validation and for embedding
 into legacy core-banking systems.
 
-## 11. Diagnostic code reference
+## 12. Diagnostic code reference
 
 | Code | Severity | Meaning |
 |---|---|---|
@@ -270,9 +350,19 @@ into legacy core-banking systems.
 | DISPUTE-1 | error | no arbiter-ruling remedy declared |
 | ORACLE-1..5 | error | malformed consensus-oracle configuration |
 | RULES-1 | error | pluggable module has no entry for this class |
+| RULES-2 | error | rule module claims ratified status without a matching/present content hash (§8.1) |
+| RULES-3 | warning | rule module has no ratification block, or is not yet ratified (§8.1) |
+| BUNDLE-1 | error | a bundle declares no legs |
+| BUNDLE-2 | error | a bundle has no (or a blank) `completeness_attestation` (§9) |
+| LEG-1..4 | error | a leg is missing from/to/asset, has a bad `payment`, an undeclared party, or a self-transfer |
+| INAH-1 | error | bay' al-'inah: a two-party buy-back with a time/price asymmetry |
+| INAH-2 | error | organized tawarruq: a longer ring, or a deferred-in + spot-out monetization flip |
+| INAH-3 | warning | a round-trip with no time/price asymmetry (no riba proven; formalism flagged) |
+| MAQASID-1 / MAQASID-2 | warning | maqsad-risk on a single instrument (tawarruq/murabahah/musharakah mutanaqisah) — never blocks (§7) |
+| MAQASID-3 | warning | a dangling deferred leg in a bundle, with no disposal shown anywhere in it (§9) — never blocks |
 | PARSE | error | lexical/syntactic error (LSP/FFI surface) |
 
-## 12. Stability
+## 13. Stability
 
 This is version 0.1: the grammar and diagnostic codes may evolve. The epistemic boundary (§0) is
 **stable and non-negotiable** — no version of this engine will issue a fatwa. Contributions to the

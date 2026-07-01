@@ -13,7 +13,9 @@ fn usage() -> ! {
          \x20 deducible build <file.fiqh> [opts]   check, then emit code (--target solidity|manifest|zk|all)\n\
          \x20 deducible nl    <file.txt>           draft a .fiqh spec from natural language (experimental)\n\
          \x20 deducible lsp                        run the Language Server (stdio JSON-RPC, for editors)\n\
-         \x20 deducible fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n"
+         \x20 deducible fuzz [N]                   fuzz the front-end + engine for N iterations (default 100000)\n\
+         \x20 deducible rules verify <module.json>  check a rule module's ratification is present and its content hash unmodified\n\
+         \x20 deducible rules hash <module.json>    print the module's current content hash (paste into ratification.sha256_of_module after real sign-off)\n"
     );
     exit(2);
 }
@@ -268,6 +270,41 @@ fn main() {
                 "emitted from '{}' ({}){} — consistent-by-construction:\n    {}",
                 spec.name, g.instrument, gov, emitted.join("\n    ")
             );
+        }
+        "rules" => {
+            let sub = args.get(2).map(|s| s.as_str()).unwrap_or("");
+            let path = args.get(3).cloned().unwrap_or_else(|| usage());
+            let s = read(&path);
+            let rs = match fiqhc::sema::RuleSet::from_json(&s) {
+                Ok(rs) => rs,
+                Err(e) => {
+                    eprintln!("deducible: {}", e);
+                    exit(2);
+                }
+            };
+            match sub {
+                "verify" => {
+                    let diags = rs.verify_ratification(fiqhc::ast::Span::new(0, 0));
+                    let errors = report(&path, &diags);
+                    if errors > 0 {
+                        eprintln!(
+                            "\nTAMPERED or malformed ratification: '{}' ({} error(s)). Do not load this module for enforcement.",
+                            rs.label(),
+                            errors
+                        );
+                        exit(1);
+                    } else if diags.is_empty() {
+                        println!("ratified: '{}' — content hash matches the ratification record.", rs.label());
+                    } else {
+                        println!("draft (not yet ratified): '{}' — see warning(s) above.", rs.label());
+                    }
+                }
+                "hash" => println!("{}", rs.compute_content_hash()),
+                _ => {
+                    eprintln!("usage: deducible rules verify <module.rules.json>\n       deducible rules hash <module.rules.json>");
+                    exit(2);
+                }
+            }
         }
         "lsp" => fiqhc::lsp::run(),
         "fuzz" => {

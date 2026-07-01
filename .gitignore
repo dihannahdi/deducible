@@ -8,6 +8,9 @@ node_modules
 artifacts
 cache
 
+# runtime state — the gateway's append-only conformance history, generated per-deployment
+services/conformance-log/
+
 # generated documents (build from paper/*.md with pandoc)
 *.docx
 paper/full_paper_doc.md

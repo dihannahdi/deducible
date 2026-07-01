@@ -2,6 +2,24 @@
   "authority": "AAOIFI",
   "version": "2017",
   "note": "Rule module — pure data. The engine is separate; this module encodes one authority's rule-base. Citations flagged [scholar-verify]; a qualified board must ratify the module, not the engine.",
+  "ratification": {
+    "status": "draft",
+    "ratified_by": null,
+    "ratification_date": null,
+    "source_refs": [
+      "AAOIFI Shari'ah Standard No. 9 (Ijarah and Ijarah Muntahia Bittamleek)",
+      "AAOIFI Shari'ah Standard No. 12 (Sharikah/Musharakah)",
+      "AAOIFI Shari'ah Standard No. 13 (Mudarabah)",
+      "al-Baqarah 2:275",
+      "prohibition of gharar (Sahih Muslim)",
+      "Cavendish Square Holdings v Makdessi [2015] UKSC 67",
+      "Scammell v Ouston [1941] AC 251"
+    ],
+    "translator": "engineering draft — encoded from the cited standards and cases by the project maintainers; not yet reviewed or ratified by AAOIFI or an independent Shari'ah board",
+    "content_hash_at_last_edit": "19373c235ee2180487833a3a7969f0dbbbe279cca7b51a1004431103117e9f39",
+    "sha256_of_module": null,
+    "supersedes": null
+  },
   "regimes": {
     "islamic": {
       "classes": {

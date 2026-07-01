@@ -13,6 +13,7 @@ bundle MurabahahComposite {
   meta {
     basis: "wakalah (agency to purchase) then murabahah (cost-plus sale); the customer keeps the asset";
     regime: islamic;
+    completeness_attestation: "test fixture — both legs of the positive control are declared; the customer's onward disposal, if any, is out of scope for this financing bundle";
   }
 
   parties {
